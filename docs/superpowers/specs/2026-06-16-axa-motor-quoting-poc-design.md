@@ -3,7 +3,8 @@
 - **Date:** 2026-06-16
 - **Status:** Draft for review
 - **Type:** Proof of concept / R&D prototype to support a client proposal
-- **Owner:** (internal) — originated from Head of Engineering
+- **Owner:** gokulan.r
+- **Originated from:** Head of Engineering
 
 > **Disclaimer / AXA isolation:** This is an independent R&D prototype. It uses
 > **only publicly available information** and **synthetic mock data**. It does
