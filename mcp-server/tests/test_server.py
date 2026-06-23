@@ -1,128 +1,108 @@
-from datetime import date
+"""Tests for the MCP tool functions.
+
+Tools are stateless thin wrappers: they forward to the module-level platform
+client and return its parsed dict unchanged. We monkeypatch that client with a
+fake and assert each tool delegates correctly — in particular that the session
+id flows through get/update.
+"""
+
+from __future__ import annotations
 
 import pytest
 
 from app import server
-from app.models import VehicleDetails
-from tests.test_models import make_fr_quote_input, make_gb_quote_input
 
 
-class _FakeAcme:
+class FakePlatformClient:
     def __init__(self):
-        self.captured = {}
+        self.calls = []
 
-    def lookup_vehicle(self, identifier: str, country_code: str = "GB"):
-        ident = identifier.upper().replace(" ", "")
-        if ident == "AB12CDE":
-            return VehicleDetails(identifier="AB12CDE", make="Volkswagen",
-                model="Golf", year=2019, value=14000.0, insurance_group=20)
-        if ident == "AA123BB":
-            return VehicleDetails(identifier="AA123BB", make="Renault",
-                model="Clio", year=2020, value=16000.0)
-        return None
+    def start_quote(self):
+        self.calls.append(("start_quote",))
+        return {
+            "quoteId": "q-1",
+            "sessionId": "s-1",
+            "journeyState": "quote_started",
+            "missingFields": ["vehicle.registration"],
+            "currentOutcome": None,
+        }
 
-    def get_quote(self, country_code: str, payload: dict):
-        self.captured["country_code"] = country_code
-        self.captured["payload"] = payload
-        return {"quote_ref": "Q-X", "annual_premium": 642.123}
+    def get_quote(self, quote_id, session_id):
+        self.calls.append(("get_quote", quote_id, session_id))
+        return {"quoteId": quote_id, "journeyState": "collecting", "missingFields": []}
 
+    def update_quote(self, quote_id, session_id, patch):
+        self.calls.append(("update_quote", quote_id, session_id, patch))
+        return {"quoteId": quote_id, "journeyState": "ready_to_price", "missingFields": []}
 
-@pytest.fixture(autouse=True)
-def _wire_fakes(monkeypatch):
-    fake = _FakeAcme()
-    monkeypatch.setattr(server, "_acme", fake)
-    monkeypatch.setattr(server, "_store", server.QuoteStore())
-    return fake
+    def lookup_vehicle(self, registration):
+        self.calls.append(("lookup_vehicle", registration))
+        return {"registration": registration, "make": "Ford", "model": "Focus"}
 
-
-def test_get_quote_schema_dispatches():
-    assert server.get_quote_schema("GB")["currency"] == "GBP"
-    assert server.get_quote_schema("FR")["currency"] == "EUR"
-    assert server.get_quote_schema("DE")["error"] == "unsupported_country"
-    assert server.get_quote_schema()["country"] == "GB"
+    def lookup_address(self, postcode):
+        self.calls.append(("lookup_address", postcode))
+        return {"postcode": postcode, "candidates": [{"line1": "10 Downing St"}]}
 
 
-def test_lookup_vehicle_found_and_not_found():
-    found = server.lookup_vehicle("AB12CDE", "GB")
-    assert found["found"] is True
-    assert found["make"] == "Volkswagen"
-    assert found["country_code"] == "GB"
-    missing = server.lookup_vehicle("ZZ99ZZZ", "GB")
-    assert missing == {"found": False, "country_code": "GB", "identifier": "ZZ99ZZZ"}
+@pytest.fixture
+def fake(monkeypatch):
+    client = FakePlatformClient()
+    monkeypatch.setattr(server, "_platform", client)
+    return client
 
 
-def test_lookup_vehicle_fr():
-    found = server.lookup_vehicle("aa 123 bb", "fr")
-    assert found["found"] is True and found["country_code"] == "FR"
-    assert found["make"] == "Renault"
+def test_start_motor_quote_returns_creation_state(fake):
+    result = server.start_motor_quote()
+    assert result["quoteId"] == "q-1"
+    assert result["sessionId"] == "s-1"
+    assert result["journeyState"] == "quote_started"
+    assert fake.calls == [("start_quote",)]
 
 
-def test_submit_quote_request_gb_builds_age_and_quote(_wire_fakes, monkeypatch):
-    # Freeze "today" so age derivation is deterministic.
-    monkeypatch.setattr(server, "_today", lambda: date(2024, 5, 1))
-    out = server.submit_quote_request("GB", make_gb_quote_input().model_dump(mode="json"))
-    payload = _wire_fakes.captured["payload"]
-    assert payload["age"] == 34
-    assert payload["insurance_group"] == 20
-    assert payload["cover_tier"] == "comprehensive"
-    assert payload["voluntary_excess"] == 250
-    assert out["currency"] == "GBP"
-    assert out["country_code"] == "GB"
-    assert out["annual_premium"] == 642.12
-    assert out["monthly_premium"] == round(642.12 / 12, 2)
-    assert out["quote_ref"] == "Q-X"
+def test_get_motor_quote_forwards_session_id(fake):
+    result = server.get_motor_quote("q-1", "s-1")
+    assert result["journeyState"] == "collecting"
+    assert fake.calls == [("get_quote", "q-1", "s-1")]
 
 
-def test_submit_quote_request_fr(_wire_fakes):
-    out = server.submit_quote_request("fr", make_fr_quote_input().model_dump(mode="json"))
-    payload = _wire_fakes.captured["payload"]
-    assert _wire_fakes.captured["country_code"] == "FR"
-    assert payload["bonus_malus"] == 0.85
-    assert payload["formule"] == "tous_risques"
-    assert payload["franchise"] == 300
-    assert "value" in payload
-    assert out["currency"] == "EUR"
-    assert out["country_code"] == "FR"
+def test_update_motor_quote_forwards_session_id_and_patch(fake):
+    patch = {"customer": {"firstName": "Sam"}, "vehicle": {"annualMileage": 8000}}
+    result = server.update_motor_quote("q-1", "s-1", patch)
+    assert result["journeyState"] == "ready_to_price"
+    assert fake.calls == [("update_quote", "q-1", "s-1", patch)]
 
 
-def test_submit_quote_request_unsupported_country():
-    out = server.submit_quote_request("DE", {})
-    assert out == {"error": "unsupported_country", "country_code": "DE"}
+def test_lookup_vehicle_delegates(fake):
+    result = server.lookup_vehicle("AB12 CDE")
+    assert result["make"] == "Ford"
+    assert fake.calls == [("lookup_vehicle", "AB12 CDE")]
 
 
-def test_create_handoff_link_mints_guid_and_stores():
-    quote = server.submit_quote_request("GB", make_gb_quote_input().model_dump(mode="json"))
-    link = server.create_handoff_link(quote)
-    assert link["handoff_url"].endswith(link["guid"])
-    assert server._store.get(link["guid"]) is not None
+def test_lookup_address_delegates(fake):
+    result = server.lookup_address("SW1A 1AA")
+    assert result["candidates"][0]["line1"] == "10 Downing St"
+    assert fake.calls == [("lookup_address", "SW1A 1AA")]
 
 
-def test_handoff_page_escapes_html():
-    from starlette.testclient import TestClient
-
-    qi = make_gb_quote_input()
-    qi.vehicle.make = "<script>alert(1)</script>"
-    quote = {
-        "quote_ref": "Q-<b>x</b>", "currency": "GBP", "annual_premium": 642.12,
-        "monthly_premium": 53.51, "country_code": "GB",
-        "input": qi.model_dump(mode="json"),
+def test_tools_are_registered_with_expected_annotations():
+    tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
+    expected = {
+        "start_motor_quote",
+        "get_motor_quote",
+        "update_motor_quote",
+        "lookup_vehicle",
+        "lookup_address",
     }
-    link = server.create_handoff_link(quote)
-    client = TestClient(server.mcp.streamable_http_app())
-    page = client.get(f"/handoff/{link['guid']}")
-    assert page.status_code == 200
-    assert "<script>alert(1)</script>" not in page.text
-    assert "&lt;script&gt;" in page.text
+    assert expected <= set(tools)
 
-
-def test_handoff_page_renders_known_and_unknown(monkeypatch):
-    from starlette.testclient import TestClient
-
-    monkeypatch.setattr(server, "_today", lambda: date(2024, 5, 1))
-    quote = server.submit_quote_request("GB", make_gb_quote_input().model_dump(mode="json"))
-    link = server.create_handoff_link(quote)
-    client = TestClient(server.mcp.streamable_http_app())
-    ok = client.get(f"/handoff/{link['guid']}")
-    assert ok.status_code == 200 and "642.12" in ok.text and "GBP" in ok.text
-    missing = client.get("/handoff/deadbeef")
-    assert missing.status_code == 404
+    # read-only hints per the brief.
+    assert tools["get_motor_quote"].annotations.readOnlyHint is True
+    assert tools["lookup_vehicle"].annotations.readOnlyHint is True
+    assert tools["lookup_address"].annotations.readOnlyHint is True
+    # state-changing tools are not read-only.
+    assert tools["start_motor_quote"].annotations.readOnlyHint is False
+    assert tools["update_motor_quote"].annotations.readOnlyHint is False
+    # open-world lookups + creation reach external/world state.
+    assert tools["lookup_vehicle"].annotations.openWorldHint is True
+    assert tools["lookup_address"].annotations.openWorldHint is True
+    assert tools["start_motor_quote"].annotations.openWorldHint is True
