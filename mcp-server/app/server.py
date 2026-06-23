@@ -6,6 +6,7 @@ any text that originated from a document is treated as data, never instructions.
 
 from __future__ import annotations
 
+import html
 import os
 
 from mcp.server.fastmcp import FastMCP
@@ -57,12 +58,12 @@ def _quote_html(q: Quote) -> str:
   <div style="max-width:480px;margin:auto;background:#fff;border-radius:12px;
        border-left:6px solid #00008f;padding:24px">
     <div style="color:#00008f;font-weight:700">ACME Motor Quote</div>
-    <div style="opacity:.7">{v.make} {v.model} ({v.year}) &middot; {v.registration}</div>
+    <div style="opacity:.7">{html.escape(v.make)} {html.escape(v.model)} ({v.year}) &middot; {html.escape(v.registration)}</div>
     <div style="font-size:34px;font-weight:800;margin:12px 0">
       &pound;{q.annual_premium:.2f}<span style="font-size:14px;font-weight:400"> /year</span></div>
     <div style="color:#ff1721">&pound;{q.monthly_premium:.2f} /month</div>
     <div style="font-size:11px;opacity:.6;margin-top:12px">
-      Quote ref {q.quote_ref}. Illustrative demo &mdash; mock data only, not a binding ACME quote.</div>
+      Quote ref {html.escape(q.quote_ref)}. Illustrative demo &mdash; mock data only, not a binding ACME quote.</div>
   </div></body></html>"""
 
 

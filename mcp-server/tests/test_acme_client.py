@@ -45,3 +45,16 @@ def test_get_quote_sends_numeric_inputs_and_parses_quote():
     assert quote.annual_premium == 642.12
     assert quote.monthly_premium == round(642.12 / 12, 2)
     assert quote.input.vehicle.registration == "AB12CDE"
+
+
+def test_get_quote_age_before_birthday_is_one_less():
+    captured = {}
+
+    def handler(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"quote_ref": "Q-X", "annual_premium": 500.0})
+
+    # DOB 1990-05-01; as of 2024-04-30 (day before birthday) age is 33, not 34.
+    qi = make_quote_input()
+    _client_with(handler).get_quote(qi, today=date(2024, 4, 30))
+    assert captured["body"]["age"] == 33

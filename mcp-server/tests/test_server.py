@@ -44,6 +44,23 @@ def test_create_handoff_link_mints_guid_and_stores():
     assert server._store.get(link["guid"]) is not None
 
 
+def test_handoff_page_escapes_html():
+    from starlette.testclient import TestClient
+    from app.models import Quote
+    from tests.test_models import make_quote_input
+
+    qi = make_quote_input()
+    qi.vehicle.make = "<script>alert(1)</script>"
+    quote = Quote(quote_ref="Q-<b>x</b>", annual_premium=642.12,
+                  monthly_premium=53.51, input=qi)
+    link = server.create_handoff_link(quote.model_dump(mode="json"))
+    client = TestClient(server.mcp.streamable_http_app())
+    page = client.get(f"/handoff/{link['guid']}")
+    assert page.status_code == 200
+    assert "<script>alert(1)</script>" not in page.text
+    assert "&lt;script&gt;" in page.text
+
+
 def test_handoff_page_renders_known_and_unknown():
     from starlette.testclient import TestClient
     quote = server.submit_quote_request(make_quote_input().model_dump(mode="json"))

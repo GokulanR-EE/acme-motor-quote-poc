@@ -26,7 +26,7 @@ def make_quote_input(**overrides) -> QuoteInput:
 def test_models_construct_and_defaults():
     qi = make_quote_input()
     assert qi.cover_tier == CoverTier.COMPREHENSIVE
-    assert qi.voluntary_excess in ALLOWED_EXCESS
+    assert qi.voluntary_excess == 250
     assert qi.vehicle.insurance_group == 20
     assert qi.driver.full_name == "Jane Doe"
 
