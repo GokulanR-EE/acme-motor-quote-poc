@@ -1,11 +1,8 @@
 import json
-from datetime import date
 
 import httpx
 
 from app.acme_client import AcmeClient
-from app.models import CoverTier
-from tests.test_models import make_quote_input
 
 
 def _client_with(handler) -> AcmeClient:
@@ -14,47 +11,50 @@ def _client_with(handler) -> AcmeClient:
     return AcmeClient(base_url="http://acme.test", http=http)
 
 
-def test_lookup_vehicle_found():
+def test_lookup_vehicle_gb_found():
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/vehicles/AB12CDE"
+        assert request.url.path == "/gb/vehicles/AB12CDE"
         return httpx.Response(200, json={
-            "registration": "AB12CDE", "make": "Volkswagen", "model": "Golf",
+            "identifier": "AB12CDE", "make": "Volkswagen", "model": "Golf",
             "year": 2019, "value": 14000, "insurance_group": 20})
-    v = _client_with(handler).lookup_vehicle("ab12 cde")
+    v = _client_with(handler).lookup_vehicle("ab12 cde", "GB")
     assert v is not None and v.make == "Volkswagen" and v.insurance_group == 20
+
+
+def test_lookup_vehicle_fr_found():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/fr/vehicles/AA123BB"
+        return httpx.Response(200, json={
+            "identifier": "AA123BB", "make": "Renault", "model": "Clio",
+            "year": 2020, "value": 16000})
+    v = _client_with(handler).lookup_vehicle("aa 123 bb", "FR")
+    assert v is not None and v.make == "Renault" and v.insurance_group is None
 
 
 def test_lookup_vehicle_not_found_returns_none():
     def handler(request): return httpx.Response(404)
-    assert _client_with(handler).lookup_vehicle("ZZ99ZZZ") is None
+    assert _client_with(handler).lookup_vehicle("ZZ99ZZZ", "GB") is None
 
 
-def test_get_quote_sends_numeric_inputs_and_parses_quote():
+def test_get_quote_posts_to_country_path_and_returns_json():
     captured = {}
+
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/quotes"
+        assert request.url.path == "/gb/quotes"
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"quote_ref": "Q-AB12CDE", "annual_premium": 642.123})
-    qi = make_quote_input(cover_tier=CoverTier.COMPREHENSIVE, voluntary_excess=250)
-    quote = _client_with(handler).get_quote(qi, today=date(2024, 5, 1))
-    assert captured["body"]["age"] == 34
-    assert captured["body"]["insurance_group"] == 20
-    assert captured["body"]["cover_tier"] == "comprehensive"
-    assert captured["body"]["voluntary_excess"] == 250
-    assert quote.quote_ref == "Q-AB12CDE"
-    assert quote.annual_premium == 642.12
-    assert quote.monthly_premium == round(642.12 / 12, 2)
-    assert quote.input.vehicle.registration == "AB12CDE"
+
+    payload = {"identifier": "AB12CDE", "insurance_group": 20, "age": 34,
+               "ncb_years": 5, "cover_tier": "comprehensive", "voluntary_excess": 250}
+    out = _client_with(handler).get_quote("GB", payload)
+    assert captured["body"] == payload
+    assert out == {"quote_ref": "Q-AB12CDE", "annual_premium": 642.123}
 
 
-def test_get_quote_age_before_birthday_is_one_less():
-    captured = {}
+def test_get_quote_fr_path():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/fr/quotes"
+        return httpx.Response(200, json={"quote_ref": "Q-FR", "annual_premium": 500.0})
 
-    def handler(request):
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"quote_ref": "Q-X", "annual_premium": 500.0})
-
-    # DOB 1990-05-01; as of 2024-04-30 (day before birthday) age is 33, not 34.
-    qi = make_quote_input()
-    _client_with(handler).get_quote(qi, today=date(2024, 4, 30))
-    assert captured["body"]["age"] == 33
+    out = _client_with(handler).get_quote("FR", {"identifier": "AA123BB"})
+    assert out["quote_ref"] == "Q-FR"
