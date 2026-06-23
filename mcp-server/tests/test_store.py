@@ -1,11 +1,12 @@
-from app.store import QuoteStore
 from app.models import Quote
-from tests.test_models import make_quote_input
+from app.store import QuoteStore
+from tests.test_models import make_gb_quote_input
 
 
 def _quote() -> Quote:
-    return Quote(quote_ref="Q-AB12CDE", annual_premium=642.12,
-                 monthly_premium=53.51, input=make_quote_input())
+    return Quote(quote_ref="Q-AB12CDE", currency="GBP", annual_premium=642.12,
+                 monthly_premium=53.51, country_code="GB",
+                 input=make_gb_quote_input().model_dump(mode="json"))
 
 
 def test_save_returns_guid_and_get_roundtrips():
