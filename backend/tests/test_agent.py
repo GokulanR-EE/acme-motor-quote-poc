@@ -1,127 +1,174 @@
+"""Turn driver: greedy advance, conflict event, resolution, ready_to_price."""
+
 import pytest
 
-from app.agent import collect_turn
-from app.service import FakeQuoteService
+from app.agent import apply_resolution, collect_turn
+from app.quote_session_client import FakeQuoteService
+
+# A complete whole-model patch that satisfies every mandatory field, so a single
+# turn can reach ready_to_price (stubbed extraction returns it).
+_FULL_PATCH = {
+    "vehicle": {
+        "registration": "FX19ZTC",
+        "make": "Ford",
+        "model": "Focus",
+        "datePurchased": {"month": 3, "year": 2019},
+        "value": 12000,
+        "useOfVehicle": "Social + commuting",
+        "security": "Factory-fitted",
+        "dashcam": True,
+        "modified": False,
+        "imported": "No",
+        "daytimeLocation": "Drive",
+        "overnightLocation": "Drive",
+        "annualMileage": 8000,
+        "registeredKeeper": True,
+        "legalOwner": True,
+    },
+    "customer": {
+        "title": "Mr",
+        "firstName": "Sam",
+        "surname": "Sample",
+        "dateOfBirth": "1990-01-01",
+        "maritalStatus": "Single",
+        "childrenUnder16": "0",
+        "employmentStatus": "Employed",
+        "partTimeJob": False,
+        "yearsLivedInUK": "Since birth",
+        "address": {"houseNumberOrName": "1", "postcode": "RG1 1AA"},
+        "ownsProperty": True,
+        "carKeptOvernightAtAddress": True,
+        "email": "sam@example.com",
+    },
+    "driver": {
+        "licenceType": "Full UK",
+        "licenceHeldFor": "5",
+        "insuranceCancelledOrVoid": False,
+        "ncdYears": 5,
+        "ncdOnCompanyCar": False,
+    },
+    "history": {
+        "claimsLast3Years": 0,
+        "offencesLast5Years": 0,
+        "unspentCriminalConvictions": False,
+    },
+    "household": {
+        "carsInHousehold": "1",
+        "anotherCarHasCover": False,
+        "regularUseOfOtherVehicles": "None",
+    },
+    "cover": {
+        "paymentMethod": "Single payment",
+        "coverLevel": "Comprehensive",
+        "coverStartDate": "2026-07-01",
+        "voluntaryExcess": 250,
+    },
+}
 
 
-@pytest.fixture(autouse=True)
-def _mock_mode(monkeypatch):
-    monkeypatch.setenv("MOCK_LLM", "1")
+def _stub_extract(patch):
+    def _fn(message, asked_question=None, schema=None, client=None):
+        return patch
+    return _fn
 
 
-async def _drain(message, session, service):
-    events = []
-    async for event in collect_turn(message, session, service):
-        events.append(event)
-    return events
-
-
-async def test_incomplete_message_asks_for_missing():
-    svc = FakeQuoteService()
-    session = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
-    events = await _drain("Hi, I drive AB12CDE", session, svc)
-    assert events, "expected at least one event"
-    assert events[-1]["type"] == "text"
-    # registration was present; still missing other required fields
-    assert "still need" in events[-1]["data"].lower()
-    assert session["schema"]["currency"] == "GBP"
-
-
-async def test_complete_gb_message_emits_confirm():
-    svc = FakeQuoteService()
-    session = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
-    message = (
-        "registration AB12CDE, full_name Jane Doe, date_of_birth 1990-05-01, "
-        "postcode SW1A1AA, ncb_years 5"
-    )
-    events = await _drain(message, session, svc)
-    confirm = [e for e in events if e["type"] == "confirm"]
-    assert len(confirm) == 1
-    candidate = confirm[0]["data"]
-    assert candidate["vehicle"]["make"] == "Volkswagen"
-    assert "found" not in candidate["vehicle"]
-    assert "country_code" not in candidate["vehicle"]
-    driver = candidate["driver"]
-    assert driver["full_name"] == "Jane Doe"
-    assert driver["date_of_birth"] == "1990-05-01"
-    assert driver["postcode"] == "SW1A1AA"
-    assert driver["ncb_years"] == 5
-    assert candidate["cover_tier"] == "comprehensive"
-    assert candidate["voluntary_excess"] == 250
-    assert session["candidate"] == candidate
-    # text precedes confirm
-    assert events[-2]["type"] == "text"
-
-
-async def test_prepopulated_fields_from_upload_emit_confirm():
-    svc = FakeQuoteService()
-    session = {
-        "country_code": "GB",
-        "fields": {
-            "registration": "AB12CDE",
-            "full_name": "Jane Doe",
-            "date_of_birth": "1990-05-01",
-            "postcode": "SW1A1AA",
-            "ncb_years": 5,
-        },
-        "schema": {},
-        "history": [],
+async def _session(service):
+    created = await service.start()
+    return {
+        "quoteId": created["quoteId"],
+        "sessionId": created["sessionId"],
+        "current": {},
+        "asked_question": None,
+        "pending_conflicts": [],
     }
-    events = await _drain("done", session, svc)
-    confirm = [e for e in events if e["type"] == "confirm"]
-    assert len(confirm) == 1
-    assert confirm[0]["data"]["vehicle"]["make"] == "Volkswagen"
 
 
-async def test_fr_session_emits_fr_candidate_shape():
-    svc = FakeQuoteService()
-    session = {
-        "country_code": "FR",
-        "fields": {
-            "immatriculation": "AB123CD",
-            "full_name": "Jean Dupont",
-            "date_of_birth": "1985-03-10",
-            "code_postal": "75001",
-            "bonus_malus": 0.90,
-        },
-        "schema": {},
-        "history": [],
+async def _run(gen):
+    return [event async for event in gen]
+
+
+@pytest.mark.asyncio
+async def test_greedy_multi_field_advances_missing_fields(monkeypatch):
+    service = FakeQuoteService()
+    session = await _session(service)
+    patch = {
+        "customer": {"firstName": "Sam", "surname": "Sample", "dateOfBirth": "1990-01-01"},
+        "vehicle": {"annualMileage": 8000},
     }
-    events = await _drain("voila", session, svc)
-    confirm = [e for e in events if e["type"] == "confirm"]
-    assert len(confirm) == 1
-    candidate = confirm[0]["data"]
-    assert candidate["vehicle"]["make"] == "Renault"
-    driver = candidate["driver"]
-    assert driver["full_name"] == "Jean Dupont"
-    assert driver["code_postal"] == "75001"
-    assert driver["bonus_malus"] == 0.90
-    assert candidate["formule"] == "tous_risques"
-    assert candidate["franchise"] == 300
+    monkeypatch.setattr("app.agent.extract_patch", _stub_extract(patch))
+
+    events = await _run(collect_turn("...", session, service))
+    types = [e["type"] for e in events]
+    assert "echo" in types
+    # Three customer + one vehicle field applied; not re-asked.
+    state = await service.get(session["quoteId"], session["sessionId"])
+    for path in ("customer.firstName", "customer.surname", "customer.dateOfBirth", "vehicle.annualMileage"):
+        assert path not in state["missingFields"]
+    # Echo summarises and counts the rest.
+    echo = next(e for e in events if e["type"] == "echo")
+    assert echo["data"].startswith("✓")
+    assert "+" in echo["data"]
 
 
-async def test_unknown_vehicle_asks_for_make_model_year():
-    svc = FakeQuoteService()
-    session = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
-    message = (
-        "registration ZZ99ZZZ, full_name Jane Doe, date_of_birth 1990-05-01, "
-        "postcode SW1A1AA, ncb_years 5"
-    )
-    events = await _drain(message, session, svc)
-    assert not [e for e in events if e["type"] == "confirm"]
-    assert events[-1]["type"] == "text"
-    assert "make" in events[-1]["data"].lower()
+@pytest.mark.asyncio
+async def test_conflicting_value_raises_conflict_event(monkeypatch):
+    service = FakeQuoteService()
+    session = await _session(service)
+    session["current"] = {"vehicle": {"annualMileage": 8000}}
+    # Reflect the held value in the platform too.
+    await service.update(session["quoteId"], session["sessionId"], {"vehicle": {"annualMileage": 8000}})
+
+    monkeypatch.setattr("app.agent.extract_patch", _stub_extract({"vehicle": {"annualMileage": 18000}}))
+    events = await _run(collect_turn("actually 18000", session, service))
+
+    conflict = next(e for e in events if e["type"] == "conflict")
+    assert conflict["data"]["path"] == "vehicle.annualMileage"
+    assert conflict["data"]["chips"] == [8000, 18000]
+    # Not applied: still 8000.
+    assert session["current"]["vehicle"]["annualMileage"] == 8000
+    assert session["pending_conflicts"]
 
 
-async def test_unsupported_journey_redirects_to_acme():
-    svc = FakeQuoteService()
-    session = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
-    events = await _drain("I want to renew my policy", session, svc)
-    assert len(events) == 1 and events[0]["type"] == "text"
-    assert "acme" in events[0]["data"].lower()
-    assert "renew" in events[0]["data"].lower()
-    assert not [e for e in events if e["type"] == "confirm"]
-    # a normal quote request is NOT redirected
-    session2 = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
-    ev2 = await _drain("I drive AB12CDE", session2, svc)
-    assert "acme.example" not in ev2[-1]["data"]
+@pytest.mark.asyncio
+async def test_resolve_applies_chosen_value(monkeypatch):
+    service = FakeQuoteService()
+    session = await _session(service)
+    session["current"] = {"vehicle": {"annualMileage": 8000}}
+    await service.update(session["quoteId"], session["sessionId"], {"vehicle": {"annualMileage": 8000}})
+    session["pending_conflicts"] = [
+        {"path": "vehicle.annualMileage", "current": 8000, "proposed": 18000}
+    ]
+
+    events = await _run(apply_resolution(session, service, "vehicle.annualMileage", "18000"))
+    assert session["current"]["vehicle"]["annualMileage"] == 18000
+    assert session["pending_conflicts"] == []
+    assert any(e["type"] == "echo" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_resolve_unparseable_keeps_current(monkeypatch):
+    service = FakeQuoteService()
+    session = await _session(service)
+    session["current"] = {"vehicle": {"value": 12000}}
+    await service.update(session["quoteId"], session["sessionId"], {"vehicle": {"value": 12000}})
+    session["pending_conflicts"] = [
+        {"path": "vehicle.value", "current": 12000, "proposed": 8000}
+    ]
+
+    events = await _run(apply_resolution(session, service, "vehicle.value", "that was miles not value"))
+    # Kept current — never invented 0.
+    assert session["current"]["vehicle"]["value"] == 12000
+    assert any(e["type"] == "text" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_full_patch_reaches_ready_to_price(monkeypatch):
+    service = FakeQuoteService()
+    session = await _session(service)
+    monkeypatch.setattr("app.agent.extract_patch", _stub_extract(_FULL_PATCH))
+
+    events = await _run(collect_turn("everything at once", session, service))
+    state = await service.get(session["quoteId"], session["sessionId"])
+    assert state["journeyState"] == "ready_to_price"
+    assert state["missingFields"] == []
+    assert any("ready" in e.get("data", "") for e in events if e["type"] == "text")

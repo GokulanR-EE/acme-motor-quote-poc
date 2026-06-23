@@ -1,8 +1,10 @@
-import json
+"""Greedy, question-anchored extraction (brief §4.1, §4.2, §17.1)."""
+
+import os
 
 import pytest
 
-from app.extraction import extract_document
+from app.extraction import extract_patch
 
 
 @pytest.fixture(autouse=True)
@@ -10,52 +12,38 @@ def _mock_mode(monkeypatch):
     monkeypatch.setenv("MOCK_LLM", "1")
 
 
-def test_mock_defaults_to_gb():
-    result = extract_document(b"some bytes", "application/pdf", "doc.pdf")
-    assert result["country_code"] == "GB"
-    assert result["fields"]["registration"] == "AB12CDE"
-    assert result["fields"]["ncb_years"] == 5
-    assert result["_source"] == "document"
+def test_anchored_bare_answer_maps_to_asked_field():
+    # "8000" replying to the annual-mileage question must land on annualMileage,
+    # NOT on vehicle.value (the §17.1 gotcha).
+    patch = extract_patch("8000", asked_question="vehicle.annualMileage")
+    assert patch == {"vehicle": {"annualMileage": 8000}}
 
 
-def test_mock_infers_fr_from_filename():
-    result = extract_document(b"bytes", "application/pdf", "carte_grise.pdf")
-    assert result["country_code"] == "FR"
-    assert result["fields"]["immatriculation"] == "AB123CD"
-    assert result["fields"]["bonus_malus"] == 0.90
-    assert result["_source"] == "document"
+def test_anchored_bare_answer_not_misread_as_value():
+    patch = extract_patch("8000", asked_question="vehicle.value")
+    # With the value anchor it is a value; the point is the anchor decides.
+    assert patch == {"vehicle": {"value": 8000.0}}
 
 
-def test_mock_infers_fr_from_bytes():
-    result = extract_document(b"CARTE grise scan", "application/pdf", "scan.pdf")
-    assert result["country_code"] == "FR"
+def test_greedy_multi_fact_sentence_fills_several_fields():
+    msg = "I'm Mr Sam Sample, born 1990-01-01, reg FX19 ZTC worth 12k, 8000 miles, 5 yrs NCD"
+    patch = extract_patch(msg, asked_question=None)
+    assert patch["customer"]["title"] == "Mr"
+    assert patch["customer"]["firstName"] == "Sam"
+    assert patch["customer"]["surname"] == "Sample"
+    assert patch["customer"]["dateOfBirth"] == "1990-01-01"
+    assert patch["vehicle"]["registration"] == "FX19ZTC"
+    assert patch["vehicle"]["value"] == 12000.0
+    assert patch["vehicle"]["annualMileage"] == 8000
+    assert patch["driver"]["ncdYears"] == 5
 
 
-class _FakeChoice:
-    def __init__(self, content):
-        self.message = type("M", (), {"content": content})()
+def test_unrelated_facts_omitted():
+    patch = extract_patch("the weather is nice today", asked_question=None)
+    assert patch == {}
 
 
-class _FakeCompletions:
-    def __init__(self, content):
-        self._content = content
-
-    def create(self, **kwargs):
-        return type("R", (), {"choices": [_FakeChoice(self._content)]})()
-
-
-class _FakeClient:
-    def __init__(self, content):
-        self.chat = type("C", (), {"completions": _FakeCompletions(content)})()
-
-
-def test_live_stub_parses_json_and_sets_source(monkeypatch):
-    monkeypatch.delenv("MOCK_LLM", raising=False)
-    payload = json.dumps(
-        {"country_code": "GB", "registration": "XY99ZZZ", "full_name": "Sam"}
-    )
-    client = _FakeClient(payload)
-    result = extract_document(b"img", "image/png", "x.png", client=client)
-    assert result["country_code"] == "GB"
-    assert result["fields"]["registration"] == "XY99ZZZ"
-    assert result["_source"] == "document"
+def test_bare_reply_with_anchor_still_extracts_volunteered_extra():
+    # A short reply that also volunteers a postcode: anchor + greedy.
+    patch = extract_patch("RG1 1AA", asked_question="customer.address.postcode")
+    assert patch["customer"]["address"]["postcode"] == "RG1 1AA"

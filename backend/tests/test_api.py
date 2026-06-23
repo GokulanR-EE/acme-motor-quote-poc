@@ -1,96 +1,74 @@
+"""API: /start, /chat (SSE), /resolve — with FakeQuoteService + stubbed extraction."""
+
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.main import app
-from app.service import FakeQuoteService
+from app import main
+from app.quote_session_client import FakeQuoteService
 
 
-@pytest.fixture(autouse=True)
-def _mock_mode(monkeypatch):
-    monkeypatch.setenv("MOCK_LLM", "1")
+def _events(resp):
+    out = []
+    for line in resp.text.splitlines():
+        if line.startswith("data: "):
+            out.append(json.loads(line[len("data: "):]))
+    return out
 
 
 @pytest.fixture
-def client():
-    app.state.service = FakeQuoteService()
-    from app.api import main as main_mod
-
-    main_mod.sessions.clear()
-    return TestClient(app)
-
-
-def _sse_events(text):
-    events = []
-    for line in text.splitlines():
-        if line.startswith("data: "):
-            events.append(json.loads(line[len("data: "):]))
-    return events
+def client(monkeypatch):
+    main.sessions.clear()
+    main.app.state.service = FakeQuoteService()
+    monkeypatch.setenv("MOCK_LLM", "1")
+    return TestClient(main.app)
 
 
-def test_health(client):
-    resp = client.get("/health")
+def test_start_returns_session_and_missing(client):
+    resp = client.post("/start")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    assert body["session_id"]
+    assert body["journeyState"] in ("quote_started", "collecting")
+    assert body["missingFields"]
 
 
-def test_chat_emits_confirm_when_fields_complete(client):
-    message = (
-        "registration AB12CDE, full_name Jane Doe, date_of_birth 1990-05-01, "
-        "postcode SW1A1AA, ncb_years 5"
+def test_chat_greedy_turn_advances(client, monkeypatch):
+    sid = client.post("/start").json()["session_id"]
+    patch = {"customer": {"firstName": "Sam", "surname": "Sample"}, "vehicle": {"annualMileage": 8000}}
+    monkeypatch.setattr("app.agent.extract_patch", lambda *a, **k: patch)
+
+    resp = client.post("/chat", json={"session_id": sid, "message": "..."})
+    events = _events(resp)
+    types = [e["type"] for e in events]
+    assert "echo" in types
+    assert types[-1] == "done"
+
+
+def test_chat_conflict_then_resolve(client, monkeypatch):
+    sid = client.post("/start").json()["session_id"]
+    # First, set mileage 8000.
+    monkeypatch.setattr("app.agent.extract_patch", lambda *a, **k: {"vehicle": {"annualMileage": 8000}})
+    client.post("/chat", json={"session_id": sid, "message": "8000 miles"})
+
+    # Now a conflicting mileage → conflict event.
+    monkeypatch.setattr("app.agent.extract_patch", lambda *a, **k: {"vehicle": {"annualMileage": 18000}})
+    resp = client.post("/chat", json={"session_id": sid, "message": "actually 18000"})
+    events = _events(resp)
+    conflict = next(e for e in events if e["type"] == "conflict")
+    assert conflict["data"]["path"] == "vehicle.annualMileage"
+
+    # Resolve picks 18000.
+    resp = client.post(
+        "/resolve",
+        json={"session_id": sid, "path": "vehicle.annualMileage", "value": "18000"},
     )
-    resp = client.post("/chat", json={"session_id": "s1", "message": message})
-    assert resp.status_code == 200
-    events = _sse_events(resp.text)
-    assert events[-1] == {"type": "done"}
-    confirm = [e for e in events if e["type"] == "confirm"]
-    assert len(confirm) == 1
-    assert confirm[0]["data"]["vehicle"]["make"] == "Volkswagen"
+    events = _events(resp)
+    assert any(e["type"] == "echo" for e in events)
+    assert main.sessions[sid]["current"]["vehicle"]["annualMileage"] == 18000
 
 
-def test_upload_fr_carte_grise(client):
-    files = {"file": ("carte_grise.pdf", b"bytes", "application/pdf")}
-    resp = client.post("/upload", data={"session_id": "s2"}, files=files)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["country_code"] == "FR"
-    assert body["fields"]["immatriculation"] == "AB123CD"
-    assert "_source" not in body["fields"]
-    assert body["schema"]["currency"] == "EUR"
-
-    from app.api import main as main_mod
-
-    session = main_mod.sessions["s2"]
-    assert session["country_code"] == "FR"
-    assert session["fields"]["immatriculation"] == "AB123CD"
-    assert session["schema"]["currency"] == "EUR"
-
-
-def test_upload_default_gb(client):
-    files = {"file": ("licence.png", b"bytes", "image/png")}
-    resp = client.post("/upload", data={"session_id": "s3"}, files=files)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["country_code"] == "GB"
-    assert body["fields"]["registration"] == "AB12CDE"
-    assert "_source" not in body["fields"]
-
-
-def test_confirm_returns_quote_and_handoff(client):
-    # upload to populate fields, then chat to build a candidate, then confirm
-    files = {"file": ("licence.png", b"bytes", "image/png")}
-    client.post("/upload", data={"session_id": "s4"}, files=files)
-    client.post("/chat", json={"session_id": "s4", "message": "looks good"})
-
-    resp = client.post("/confirm", json={"session_id": "s4"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["quote"]["quote_ref"] == "Q-AB12CDE"
-    assert body["handoff_url"].endswith("/handoff/fake-guid-0001")
-    assert body["guid"] == "fake-guid-0001"
-
-
-def test_confirm_no_candidate_returns_409(client):
-    resp = client.post("/confirm", json={"session_id": "nope"})
-    assert resp.status_code == 409
+def test_chat_unknown_session_404(client):
+    resp = client.post("/chat", json={"session_id": "nope", "message": "hi"})
+    assert resp.status_code == 404
