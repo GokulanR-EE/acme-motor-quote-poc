@@ -1,0 +1,55 @@
+{
+  "mappings": [
+    {
+      "name": "gb-vehicle-AB12CDE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/gb/vehicles/AB12CDE"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "identifier": "AB12CDE",
+          "make": "Volkswagen",
+          "model": "Golf",
+          "year": 2019,
+          "value": 14000,
+          "insurance_group": 20
+        }
+      }
+    },
+    {
+      "name": "gb-vehicle-TS21EVS",
+      "request": {
+        "method": "GET",
+        "urlPath": "/gb/vehicles/TS21EVS"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "identifier": "TS21EVS",
+          "make": "Tesla",
+          "model": "Model 3",
+          "year": 2021,
+          "value": 38000,
+          "insurance_group": 48
+        }
+      }
+    },
+    {
+      "name": "gb-vehicle-not-found",
+      "priority": 10,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/gb/vehicles/.*"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "error": "vehicle_not_found" }
+      }
+    }
+  ]
+}

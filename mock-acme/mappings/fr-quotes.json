@@ -1,0 +1,61 @@
+{
+  "mappings": [
+    {
+      "name": "fr-quote-tous_risques",
+      "request": {
+        "method": "POST",
+        "urlPath": "/fr/quotes",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.formule", "equalTo": "tous_risques" } }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "jsonBody": {
+          "quote_ref": "Q-{{jsonPath request.body '$.identifier'}}",
+          "annual_premium": "{{math (math (math (math (jsonPath request.body '$.value') '*' 0.015) '+' 150) '*' (jsonPath request.body '$.bonus_malus')) '*' (math 1.0 '*' (math 1 '-' (math (jsonPath request.body '$.franchise') '*' 0.0001)))}}"
+        }
+      }
+    },
+    {
+      "name": "fr-quote-tiers_plus",
+      "request": {
+        "method": "POST",
+        "urlPath": "/fr/quotes",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.formule", "equalTo": "tiers_plus" } }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "jsonBody": {
+          "quote_ref": "Q-{{jsonPath request.body '$.identifier'}}",
+          "annual_premium": "{{math (math (math (math (jsonPath request.body '$.value') '*' 0.015) '+' 150) '*' (jsonPath request.body '$.bonus_malus')) '*' (math 0.80 '*' (math 1 '-' (math (jsonPath request.body '$.franchise') '*' 0.0001)))}}"
+        }
+      }
+    },
+    {
+      "name": "fr-quote-au_tiers",
+      "request": {
+        "method": "POST",
+        "urlPath": "/fr/quotes",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.formule", "equalTo": "au_tiers" } }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "jsonBody": {
+          "quote_ref": "Q-{{jsonPath request.body '$.identifier'}}",
+          "annual_premium": "{{math (math (math (math (jsonPath request.body '$.value') '*' 0.015) '+' 150) '*' (jsonPath request.body '$.bonus_malus')) '*' (math 0.60 '*' (math 1 '-' (math (jsonPath request.body '$.franchise') '*' 0.0001)))}}"
+        }
+      }
+    }
+  ]
+}
