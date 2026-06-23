@@ -1,7 +1,7 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "ACME motor insurance quoting POC — mock FastAPI backend with an LLM chat agent."
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.137.1",

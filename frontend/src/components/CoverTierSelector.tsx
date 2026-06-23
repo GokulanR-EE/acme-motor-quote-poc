@@ -21,9 +21,9 @@ export function CoverTierSelector({
           onClick={() => onChange(t.id)}
           style={{
             padding: "6px 10px",
-            border: "1px solid var(--axa-blue)",
-            background: value === t.id ? "var(--axa-blue)" : "#fff",
-            color: value === t.id ? "#fff" : "var(--axa-blue)",
+            border: "1px solid var(--acme-blue)",
+            background: value === t.id ? "var(--acme-blue)" : "#fff",
+            color: value === t.id ? "#fff" : "var(--acme-blue)",
             borderRadius: 6,
           }}
         >

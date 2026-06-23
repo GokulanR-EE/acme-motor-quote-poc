@@ -12,7 +12,7 @@ from app.llm.agent import run_agent_turn
 from app.quoting.engine import price
 from app.quoting.models import CoverTier, QuoteInput
 
-app = FastAPI(title="AXA Motor Quoting POC (mock)")
+app = FastAPI(title="ACME Motor Quoting POC (mock)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],

@@ -1,4 +1,4 @@
-# MOCK DATA — synthetic/public only, NOT AXA systems or data.
+# MOCK DATA — synthetic/public only, NOT ACME systems or data.
 """Synthetic vehicle registration lookup for the POC."""
 
 from app.quoting.models import VehicleInput

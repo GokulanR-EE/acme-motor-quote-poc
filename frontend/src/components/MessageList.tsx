@@ -1,4 +1,4 @@
-import type { Quote } from "../types";
+import type { CoverTier, Quote } from "../types";
 import { QuoteCard } from "./QuoteCard";
 
 export interface ChatItem {
@@ -12,7 +12,7 @@ export function MessageList({
   onQuoteChange,
 }: {
   items: ChatItem[];
-  onQuoteChange: (changes: { cover_tier?: string; voluntary_excess?: number }) => void;
+  onQuoteChange: (changes: { cover_tier?: CoverTier; voluntary_excess?: number }) => void;
 }) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
@@ -22,7 +22,7 @@ export function MessageList({
             <div
               style={{
                 display: "inline-block",
-                background: it.role === "user" ? "var(--axa-blue)" : "#eee",
+                background: it.role === "user" ? "var(--acme-blue)" : "#eee",
                 color: it.role === "user" ? "#fff" : "#000",
                 padding: "8px 12px",
                 borderRadius: 12,
@@ -33,7 +33,7 @@ export function MessageList({
               {it.text}
             </div>
           )}
-          {it.quote && <QuoteCard quote={it.quote} onChange={onQuoteChange as never} />}
+          {it.quote && <QuoteCard quote={it.quote} onChange={onQuoteChange} />}
         </div>
       ))}
     </div>

@@ -7,7 +7,7 @@ import re
 from app.llm.tools import TOOL_SCHEMAS, dispatch_tool
 
 SYSTEM_PROMPT = (
-    "You are AXA's friendly motor insurance assistant. Help the user get a car "
+    "You are ACME's friendly motor insurance assistant. Help the user get a car "
     "insurance quote by collecting, in natural language: vehicle registration, "
     "driver age, years of no-claims bonus, and postcode. Call get_quote once you "
     "have them. Offer to adjust cover tier or voluntary excess via reprice. Be "
@@ -105,7 +105,7 @@ def _run_mock_turn(user_message: str, session: dict):
         yield {
             "type": "text",
             "data": (
-                f"Thanks! Here's your illustrative AXA quote: "
+                f"Thanks! Here's your illustrative ACME quote: "
                 f"£{result['annual_premium']:.2f}/year "
                 f"(£{result['monthly_premium']:.2f}/month). "
                 "Try adjusting the excess or cover tier below."

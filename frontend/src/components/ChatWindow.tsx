@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
 import { reprice, streamChat } from "../api";
-import type { Quote } from "../types";
+import type { CoverTier, Quote } from "../types";
 import { Composer } from "./Composer";
 import { type ChatItem, MessageList } from "./MessageList";
 
 export function ChatWindow() {
   const [items, setItems] = useState<ChatItem[]>([
-    { role: "assistant", text: "Hi! I'm your AXA motor assistant. Tell me about your car to get a quote." },
+    { role: "assistant", text: "Hi! I'm your ACME motor assistant. Tell me about your car to get a quote." },
   ]);
   const sessionId = useRef(crypto.randomUUID()).current;
 
@@ -18,8 +18,8 @@ export function ChatWindow() {
     });
   }
 
-  async function onQuoteChange(changes: { cover_tier?: string; voluntary_excess?: number }) {
-    const updated = await reprice(sessionId, changes as never);
+  async function onQuoteChange(changes: { cover_tier?: CoverTier; voluntary_excess?: number }) {
+    const updated = await reprice(sessionId, changes);
     setItems((p) => {
       const copy = [...p];
       for (let i = copy.length - 1; i >= 0; i--) {
@@ -34,7 +34,7 @@ export function ChatWindow() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <div className="axa-header">AXA <span className="axa-accent">Motor</span> — quote assistant (demo)</div>
+      <div className="acme-header">ACME <span className="acme-accent">Motor</span> — quote assistant (demo)</div>
       <MessageList items={items} onQuoteChange={onQuoteChange} />
       <Composer onSend={send} />
     </div>

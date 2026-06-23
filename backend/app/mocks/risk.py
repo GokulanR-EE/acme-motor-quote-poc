@@ -1,4 +1,4 @@
-# MOCK DATA — synthetic/public only, NOT AXA systems or data.
+# MOCK DATA — synthetic/public only, NOT ACME systems or data.
 """Synthetic risk lookup tables for the POC."""
 
 _BAND_FACTORS = {"low": 0.9, "medium": 1.0, "high": 1.25}

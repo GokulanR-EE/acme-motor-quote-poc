@@ -2,8 +2,7 @@ import type { ChatEvent, CoverTier, Quote } from "./types";
 
 // Same-origin by default (the backend serves the built UI). In local dev,
 // set VITE_API_BASE=http://localhost:8000 (see .env.development).
-const BASE = (import.meta as { env?: Record<string, string | undefined> }).env
-  ?.VITE_API_BASE ?? "";
+const BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export async function streamChat(
   sessionId: string,
