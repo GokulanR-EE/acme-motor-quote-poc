@@ -9,3 +9,6 @@ node_modules/
 dist/
 # Misc
 .DS_Store
+
+# WireMock standalone jar (local integration testing only)
+*.jar
