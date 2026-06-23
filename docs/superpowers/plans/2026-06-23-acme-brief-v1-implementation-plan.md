@@ -36,19 +36,19 @@ at once, but only the backend decides what is still required and whether it can 
 
 ```
 acme-motor-quote-poc/
-├── platform/                 # mock insurer platform — the SOURCE OF TRUTH (FastAPI + OpenAPI)
-│   ├── app/
-│   │   ├── model.py          # whole-model pydantic; every leaf OPTIONAL (partial patches validate)
-│   │   ├── required.py       # mandatory-field spec → missingFields computation
-│   │   ├── events.py         # append-only event store + in-process pub/sub
-│   │   ├── quote_service.py  # create/get/update (deep-merge); missingFields
-│   │   ├── rating.py         # mock pricing (base £350 + adjustments, brief §15)
-│   │   ├── underwriting.py   # quote / refer / decline + reasons
-│   │   ├── documents.py      # LLM-backed extraction (whole-model + image); no regex fallback
-│   │   ├── purchase_link.py  # signed, GUID-addressed purchase URLs + stable demo GUID
-│   │   ├── api.py            # FastAPI; three-layer logging; serves OpenAPI
-│   │   └── channel.py        # WebSocket (+ SSE fallback) event channel for the dashboard
-│   └── tests/
+├── platform/                 # mock insurer platform — SOURCE OF TRUTH — Java / Spring Boot (port 8070)
+│   ├── pom.xml + mvnw        # Maven wrapper (no local Maven needed); Spring Boot 4.x, Java 21, runs on JDK 26
+│   ├── src/main/java/com/acme/platform/
+│   │   ├── model/            # whole-model DTOs; fields OPTIONAL so partial/greedy patches validate
+│   │   ├── events/           # EventStore (append-only) + publisher; Event(category: domain|api|tool)
+│   │   ├── quote/            # QuoteService: create/get/patch (deep-merge), missingFields, journeyState
+│   │   ├── rating/           # mock pricing (base £350 + adjustments, brief §15)
+│   │   ├── underwriting/     # quote / refer / decline + reasons
+│   │   ├── vendor/           # VendorClient (SOAP SEAM) + MockVendorClient (synthetic now); real SOAP later
+│   │   ├── purchase/         # signed, GUID-addressed purchase links + stable demo GUID
+│   │   ├── api/              # REST controllers (three-layer logged) + springdoc OpenAPI
+│   │   └── channel/          # WebSocket (+ SSE) event channel for the dashboard
+│   └── src/test/java/...     # JUnit + MockMvc
 ├── mcp-server/               # EXPAND: ~12 typed tools → platform API (stateless, idempotent)
 ├── backend/                  # conversation backend (evolve): greedy+anchored extraction,
 │                             #   conflict resolution, doc upload (attach+message), MCP client
@@ -176,6 +176,16 @@ dashboard; `get_motor_quote` returns `{quoteId, journeyState, missingFields, cur
 - **Guardrails (§16):** conversation never invents premiums/cover/outcomes; backend is the only source of pricing/underwriting; unsupported journeys → `route_to_alternative_channel` (already prototyped).
 - **GUIDs** for quote IDs and purchase links; one stable demo GUID.
 - **OpenAPI** published by the platform (§10) — MCP and dashboard build against it.
+- **Vendor SOAP seam (mocked):** a realistic insurer backend calls a vendor over **SOAP**
+  for the values it doesn't own (vehicle lookup, rating, etc.). The platform models this as
+  a **`VendorClient` interface** with a **`MockVendorClient`** (synthetic data) for the PoC;
+  the real `SoapVendorClient` (JAX-WS / Spring-WS stubs from the vendor WSDL) drops into the
+  same interface later with **no change** to QuoteService/Rating/Underwriting. This keeps the
+  brief's "real-integration seam must be visible" requirement explicit.
+
+> **Platform language = Java / Spring Boot** (chosen to mirror a realistic insurer stack;
+> Spring Boot 4.x on Java 21, runs on the installed JDK 26 via the Maven wrapper). The
+> earlier Python `platform/` foundation is retired/replaced.
 
 ## Self-review
 - Spec coverage: every brief §4 behaviour, §5 journey, §7 tool, §9 service, §11 model section, §14 dashboard view, §15 pricing rule, and §18 slice maps to a slice above. Slices 1–2 are task-detailed; 3–7 are outlined and will be detailed on entry.
