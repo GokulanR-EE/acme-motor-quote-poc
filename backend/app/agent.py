@@ -51,6 +51,32 @@ _UPPER_FIELDS = {"registration", "immatriculation", "postcode"}
 # Fields needing original case (bare "First Last" name detection).
 _CASE_SENSITIVE_FIELDS = {"full_name"}
 
+# Journeys this POC does not handle. We detect them and redirect to ACME's site
+# rather than mis-treating them as a new-quote request (19-Jun action item).
+ACME_WEBSITE = os.getenv("ACME_WEBSITE_URL", "https://www.acme.example")
+_UNSUPPORTED_JOURNEYS = {
+    "renew your policy": r"\brenew(al|ing)?\b",
+    "make a claim": r"\bclaim(s|ing)?\b",
+    "add another vehicle": r"\b(multi[- ]?vehicle|second car|another (car|vehicle)|add (a|another) (car|vehicle))\b",
+    "cancel your policy": r"\bcancel(lation|ling)?\b",
+    "amend your policy": r"\b(amend|change my policy|update my policy)\b",
+}
+
+
+def _detect_unsupported_journey(message: str) -> str | None:
+    for label, pattern in _UNSUPPORTED_JOURNEYS.items():
+        if re.search(pattern, message, re.IGNORECASE):
+            return label
+    return None
+
+
+def _redirect_text(label: str) -> str:
+    return (
+        f"It sounds like you'd like to {label}. I can only help with a new motor "
+        f"quote here — for that, please visit ACME: {ACME_WEBSITE}. If you'd like a "
+        "new quote instead, just tell me about your car."
+    )
+
 
 def _identifier(fields: dict, cc: str) -> str:
     return fields.get("registration", "") if cc == "GB" else fields.get("immatriculation", "")
@@ -160,6 +186,14 @@ async def _emit_candidate(fields: dict, cc: str, session: dict, service):
 
 async def collect_turn(message: str, session: dict, service, client=None):
     """Drive one user turn, yielding event dicts."""
+    # Redirect unsupported journeys (renewals, claims, etc.) to ACME's website,
+    # unless we're already mid-quote (a candidate has been built).
+    if not session.get("candidate"):
+        journey = _detect_unsupported_journey(message)
+        if journey:
+            yield {"type": "text", "data": _redirect_text(journey)}
+            return
+
     cc = await _ensure_schema(session, service)
     schema = session["schema"]
     session.setdefault("fields", {})

@@ -111,3 +111,17 @@ async def test_unknown_vehicle_asks_for_make_model_year():
     assert not [e for e in events if e["type"] == "confirm"]
     assert events[-1]["type"] == "text"
     assert "make" in events[-1]["data"].lower()
+
+
+async def test_unsupported_journey_redirects_to_acme():
+    svc = FakeQuoteService()
+    session = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
+    events = await _drain("I want to renew my policy", session, svc)
+    assert len(events) == 1 and events[0]["type"] == "text"
+    assert "acme" in events[0]["data"].lower()
+    assert "renew" in events[0]["data"].lower()
+    assert not [e for e in events if e["type"] == "confirm"]
+    # a normal quote request is NOT redirected
+    session2 = {"country_code": "GB", "fields": {}, "schema": {}, "history": []}
+    ev2 = await _drain("I drive AB12CDE", session2, svc)
+    assert "acme.example" not in ev2[-1]["data"]

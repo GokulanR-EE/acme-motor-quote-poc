@@ -53,9 +53,11 @@
 - **Questions:** How should unsupported journeys (claims, renewals, multi-vehicle)
   be handled — routed to the ACME website? Is an **embedded AI journey within the
   existing quote flow** wanted as a stretch goal?
-- **POC stance:** Motor new-quote only. The schema tool returns an
-  `unsupported_country` signal so the host can route elsewhere; journey-level
-  routing (claims/renewals) is not yet built.
+- **POC stance:** Motor new-quote only. Unsupported journeys (renew, claim,
+  cancel, amend, multi-vehicle) are now **detected and redirected to the ACME
+  website**. The schema tool also returns an `unsupported_country` signal for
+  out-of-scope regions. A full **renewal** journey (renewal-specific ACME mock +
+  flow) is a planned **future iteration**.
 
 ## 7. Non-happy-path API responses
 - **Questions:** How should **referral** vs **decline** responses from ACME be
