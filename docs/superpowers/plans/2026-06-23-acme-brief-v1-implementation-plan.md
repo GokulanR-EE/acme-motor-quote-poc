@@ -10,9 +10,12 @@ quote continuation, purchase handoff, and a **live dashboard** — with the insu
 **mock platform as the source of truth**, an **MCP integration layer**, and a
 **conversation layer**.
 
-**Form-factor decision:** the conversation layer is our **standalone web app** (chat UI
-+ backend LLM) for now, *not* the ChatGPT App — adding a write-capable ChatGPT connector
-needs a Business/Enterprise plan, which is unavailable.
+**Form-factor — demonstrate BOTH (Phil):** show the capability as **both** a ChatGPT App
+**and** our own **standalone web app**, running against the **same production-quality MCP**.
+That dual demo is the goal — and it's exactly why the core is front-end-agnostic (below).
+The web app is the primary, always-available demo; the in-ChatGPT demo additionally needs a
+ChatGPT workspace permitting **write-capable custom connectors** (Business/Enterprise/Edu;
+individual Plus/Pro is read-only) — an access dependency, not an architecture change.
 
 **Extensibility is a first-class requirement.** The conversation layer is a **thin,
 swappable adapter**; the durable core is the **MCP + platform**, which make **no
@@ -176,6 +179,22 @@ dashboard; `get_motor_quote` returns `{quoteId, journeyState, missingFields, cur
 - **Guardrails (§16):** conversation never invents premiums/cover/outcomes; backend is the only source of pricing/underwriting; unsupported journeys → `route_to_alternative_channel` (already prototyped).
 - **GUIDs** for quote IDs and purchase links; one stable demo GUID.
 - **OpenAPI** published by the platform (§10) — MCP and dashboard build against it.
+- **MCP session security (Phil — in scope):** everything submitted to the MCP (via chat
+  *or* web) is scoped to a **strong-entropy session identifier** and retrievable **only** by
+  presenting that same id; the MCP rejects cross-session access. **No** user accounts,
+  sign-in, or retrieval from existing "ACME" accounts — the high-entropy session id is the
+  sole access control. (Underpins quote-continuation: reference + mock OTP re-establish the
+  session.) Quote/state records are keyed to the session; this is **production-quality** on
+  the MCP even though the mocks/dashboard/landing are demo-grade.
+- **Demonstrate both front-ends on one MCP (Phil):** the same production-quality MCP backs
+  both the web app and the ChatGPT App — neither owns business logic; swapping the host
+  changes only the thin conversation adapter.
+- **Multi-document conflict resolution is in scope (Phil)** — part of the main solution
+  (conflict engine, Slice 3/4): handles doc-vs-doc and doc-vs-state clashes; not deferred.
+- **Vendor SOAP seam (mocked):** the platform reaches the external vendor over **SOAP** for
+  values it doesn't own (vehicle lookup, rating, etc.); modelled as a `VendorClient`
+  interface with a `MockVendorClient` (synthetic) now, and a real SOAP client (from the
+  vendor WSDL) later — same interface, no change to the services that depend on it.
 
 ## Self-review
 - Spec coverage: every brief §4 behaviour, §5 journey, §7 tool, §9 service, §11 model section, §14 dashboard view, §15 pricing rule, and §18 slice maps to a slice above. Slices 1–2 are task-detailed; 3–7 are outlined and will be detailed on entry.
