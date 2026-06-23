@@ -21,24 +21,35 @@ import json
 import os
 import re
 
-# Regex patterns keyed by field name, used by MOCK extraction.
+# Ordered regex alternatives per field for MOCK extraction. Each pattern has one
+# capturing group; the first pattern that matches wins. Patterns accept both
+# labeled input ("ncb_years: 5") and natural phrasing ("NCB 5", a bare postcode,
+# a bare "First Last" name) so typed free text works, not just labeled values.
 _PATTERNS = {
-    "registration": r"\b([A-Z]{2}\d{2}\s?[A-Z]{3})\b",
-    "immatriculation": r"\b([A-Z]{2}-?\d{3}-?[A-Z]{2})\b",
-    "full_name": r"full[_ ]name[:\s]+([A-Za-z][A-Za-z\-' ]+?)(?:,|$)",
-    "date_of_birth": r"\b(\d{4}-\d{2}-\d{2})\b",
-    "postcode": r"postcode[:\s]+([A-Za-z0-9 ]+?)(?:,|$)",
-    "code_postal": r"code[_ ]postal[:\s]+(\d{5})\b",
-    "ncb_years": r"ncb[_ ]years[:\s]+(\d{1,2})\b",
-    "bonus_malus": r"bonus[_ ]malus[:\s]+([\d.]+)\b",
-    "cover_tier": r"cover[_ ]tier[:\s]+(\w+)\b",
-    "voluntary_excess": r"voluntary[_ ]excess[:\s]+(\d+)\b",
-    "formule": r"formule[:\s]+(\w+)\b",
-    "franchise": r"franchise[:\s]+(\d+)\b",
+    "registration": [r"\b([A-Z]{2}\d{2}\s?[A-Z]{3})\b"],
+    "immatriculation": [r"\b([A-Z]{2}-?\d{3}-?[A-Z]{2})\b"],
+    "full_name": [r"\b([A-Z][a-z]+ [A-Z][a-z]+)\b"],
+    "date_of_birth": [r"\b(\d{4}-\d{2}-\d{2})\b"],
+    "postcode": [r"\b([A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})\b"],
+    "code_postal": [r"code[_ ]postal[:\s]+(\d{5})", r"\b(\d{5})\b"],
+    "ncb_years": [
+        r"ncb[_ ]years[:\s]+(\d{1,2})",
+        r"(?:ncb|no[- ]?claims)\D{0,12}(\d{1,2})",
+        r"(\d{1,2})\s*(?:years?\s*)?(?:ncb|no[- ]?claims)",
+    ],
+    "bonus_malus": [r"bonus[_ -]?malus[:\s]+([\d.]+)", r"\b([0-3]\.\d{1,2})\b"],
+    "cover_tier": [r"cover[_ ]tier[:\s]+(\w+)"],
+    "voluntary_excess": [r"voluntary[_ ]excess[:\s]+(\d+)", r"excess[:\s]+£?(\d+)"],
+    "formule": [r"formule[:\s]+(\w+)"],
+    "franchise": [r"franchise[:\s]+(\d+)"],
 }
 
 _INT_FIELDS = {"ncb_years", "voluntary_excess", "franchise"}
 _FLOAT_FIELDS = {"bonus_malus"}
+# Fields matched against the upper-cased message (plate/postcode are upper-case).
+_UPPER_FIELDS = {"registration", "immatriculation", "postcode"}
+# Fields needing original case (bare "First Last" name detection).
+_CASE_SENSITIVE_FIELDS = {"full_name"}
 
 
 def _identifier(fields: dict, cc: str) -> str:
@@ -57,20 +68,34 @@ def _coerce(name: str, raw: str):
 
 
 def _extract_fields(message: str, schema: dict) -> dict:
-    """Pull any schema-declared fields out of free text by regex."""
+    """Pull any schema-declared fields out of free text by regex.
+
+    Tries each field's ordered alternatives (labeled first, then natural
+    phrasing) and takes the first match. Case handling per field: plate/postcode
+    against the upper-cased text, names case-sensitively, everything else
+    case-insensitively.
+    """
     found: dict = {}
+    upper = message.upper()
     for field in schema.get("fields", []):
         name = field["name"]
-        pattern = _PATTERNS.get(name)
-        if not pattern:
-            continue
-        flags = re.IGNORECASE if name not in ("registration", "immatriculation") else 0
-        match = re.search(pattern, message if flags else message.upper(), flags)
-        if match:
+        for pattern in _PATTERNS.get(name, []):
+            if name in _UPPER_FIELDS:
+                match = re.search(pattern, upper)
+            elif name in _CASE_SENSITIVE_FIELDS:
+                match = re.search(pattern, message)
+            else:
+                match = re.search(pattern, message, re.IGNORECASE)
+            if not match:
+                continue
+            value = next((g for g in match.groups() if g), None)
+            if value is None:
+                continue
             try:
-                found[name] = _coerce(name, match.group(1))
+                found[name] = _coerce(name, value)
             except (ValueError, TypeError):
                 continue
+            break
     return found
 
 
