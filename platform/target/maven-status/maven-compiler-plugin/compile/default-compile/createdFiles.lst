@@ -1,0 +1,10 @@
+com/acme/platform/channel/EventWebSocketHandler.class
+com/acme/platform/channel/WebSocketConfig.class
+com/acme/platform/events/EventStore.class
+com/acme/platform/PlatformApplication.class
+com/acme/platform/channel/EventSseController.class
+com/acme/platform/api/ApiActivity.class
+com/acme/platform/events/Event.class
+com/acme/platform/vendor/VendorClient.class
+com/acme/platform/vendor/MockVendorClient.class
+com/acme/platform/api/PlatformController.class

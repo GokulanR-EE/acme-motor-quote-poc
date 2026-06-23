@@ -1,0 +1,10 @@
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/PlatformApplication.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/api/ApiActivity.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/api/PlatformController.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/channel/EventSseController.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/channel/EventWebSocketHandler.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/channel/WebSocketConfig.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/events/Event.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/events/EventStore.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/vendor/MockVendorClient.java
+/Users/gokulanr/IdeaProjects/acme-motor-quote-poc/platform/src/main/java/com/acme/platform/vendor/VendorClient.java
