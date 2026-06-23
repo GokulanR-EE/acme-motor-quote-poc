@@ -156,13 +156,14 @@ server is built so it could back that host with minimal change.
 
 | Component | Status |
 |---|---|
-| Existing chat app (`backend/` + `frontend/`, legacy AI-quoting flow) | ✅ working base |
 | MCP server: models, ACME client, GUID store, tools, handoff page | ✅ built, tested |
 | MCP server: country-aware dynamic schema (GB + FR) | ✅ built, tested |
-| Mock ACME (WireMock) GB + FR pricing | ⏳ next |
-| Web backend evolved to form-filling + confirm gate + document upload + MCP client | ⏳ planned |
-| Frontend: document upload + confirmation card (ACME rebrand) | ⏳ planned |
-| Lightweight CI (GitHub Actions) | ⏳ planned |
+| Mock ACME (WireMock) GB + FR pricing | ✅ built, verified (live) |
+| Backend: form-filling agent + `/chat`·`/upload`·`/confirm` + MCP client (legacy AI-quoting retired) | ✅ built, tested |
+| Frontend: document upload + confirmation card + quote/handoff (ACME-branded) | ✅ built, tested |
+| Full stack verified end-to-end (UI → backend → MCP → WireMock), GB + FR | ✅ GB £401.28 / FR €340.47 |
+| Lightweight CI (GitHub Actions) | ✅ added |
+| ChatGPT/Apps-SDK host; MCP auth/session; multi-doc conflict resolution | ⏳ future (see open questions) |
 
 ---
 
