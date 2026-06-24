@@ -1,78 +1,82 @@
-# ACME Motor Quote Assistant — POC
+# ACME Motor Quote — Demo
 
-Independent R&D prototype. **Synthetic mock data only. Not connected to any real ACME system.**
+Independent R&D demo. **Synthetic mock data only. Not connected to any real ACME / client system.**
+"ACME" is a placeholder — no real brand references anywhere.
 
-A conversational motor-insurance quoting demo where an LLM does **form-filling only**
-— it collects the parameters a quote needs (and can read them from an uploaded
-document) — while **all pricing is served by a mocked ACME API behind an MCP server**.
-Supports **GB** and **FR** via a dynamic, region-aware schema. See `ARCHITECTURE.md`
-for the full design and `docs/` for the spec, build plan, and open questions for ACME.
+A motor-insurance quotation journey where the **conversation layer** (a web app, or a
+ChatGPT app) does natural-language collection + document extraction, an **MCP server**
+is the integration layer, and a **mock insurer platform** is the source of truth for
+state, validation, pricing, and underwriting. Journey: **quote → price (quote / refer /
+decline) → purchase link → mock policy issuance**, with a **live dashboard**. See
+`ACME_ChatGPT_PoC_Build_Brief_v1_0.md` (the brief) and `docs/` for the plan.
+
+## Architecture (layers are decoupled — the UI is swappable)
+```
+UI (React web app  OR  ChatGPT app)
+   → Conversation backend (Python)      runs the LLM / greedy collection / doc extraction
+   → MCP server (Python)                integration layer: typed tools (separate process)
+   → Platform (Java / Spring Boot)      SOURCE OF TRUTH: quote state, rating, underwriting,
+                                          purchase link, mock policy issuance + vendor SOAP seam
+   → Dashboard (live, served by the platform)   |   GUID purchase/landing page
+```
+The conversation layer owns the conversation; the **platform owns the journey**. Rating
+and policy issuance go through a **`VendorClient` SOAP seam** (mocked now; a real
+`SoapVendorClient` from the vendor WSDL drops in later with no other change).
 
 ## Components
-- `frontend/` — React + Vite + TS chat web app: document upload, confirmation card, quote + handoff link.
-- `backend/` — FastAPI form-filling backend: runs the LLM(s) and document extraction, talks to the MCP server. **Never prices anything itself.** Endpoints: `/chat` (SSE), `/upload`, `/confirm`, `/health`.
-- `mcp-server/` — deterministic, LLM-free **MCP server** (the core artifact): `get_quote_schema`, `lookup_vehicle`, `submit_quote_request`, `create_handoff_link`, plus a GUID-protected `/handoff/{guid}` page.
-- `mock-acme/` — **WireMock** config standing in for ACME's vehicle + quote APIs (GB + FR). Config only, no code.
-- `docs/` — design spec, build plan, `open-questions-for-acme.md`.
-
-## Architecture (one line)
-`Chat UI → backend (form-filling LLM) → MCP server → mock ACME (WireMock, prices the quote) → GUID handoff page`
+- `platform/` — **Java/Spring Boot** mock insurer platform (port 8070): session-scoped quote service (whole-model, deep-merge, missingFields), rating + underwriting (quote/refer/decline), purchase link + strict-GUID landing page, mock policy issuance, event store + three-layer logging, **vendor SOAP seam**, OpenAPI. Serves the dashboard at `/dashboard`.
+- `mcp-server/` — **Python** MCP integration layer (port 8090): session-aware tools `start/get/update_motor_quote`, `lookup_vehicle/address`, `price_motor_quote`, `generate_purchase_link`, `issue_policy`. LLM-free.
+- `backend/` — **Python** conversation backend (port 8000): greedy, question-anchored collection; conflict resolution; document upload + whole-model vision extraction; price/explain/purchase/issue endpoints.
+- `frontend/` — **React/Vite** web UI (port 5173): chat, staged document upload, conflict chips, quote card, purchase, policy.
+- `dashboard/` — vanilla-JS live dashboard (event timeline / quote sessions / tool & API activity), served by the platform.
+- `docs/` — build plan + `open-questions-for-acme.md`; `mock-docs/` — synthetic sample documents to upload.
 
 ## Running the full stack locally (offline — no API key needed)
 
-Four processes. The offline mode (`MOCK_LLM=1`) uses deterministic extraction/form-filling but still drives the **real** MCP → WireMock chain via `QUOTE_SERVICE=mcp`.
+JDK 26 + `uv` + Node are used; the platform uses the Maven wrapper (`./mvnw`, no local Maven needed).
 
-**1) Mock ACME (WireMock)** — either Docker:
+**1) Platform (Java, :8070 — also serves the dashboard).** Run from `platform/` so the dashboard path resolves:
 ```bash
-cd mock-acme
-docker run --rm -p 8080:8080 -v "$PWD/mappings:/home/wiremock/mappings" \
-  wiremock/wiremock:3.9.1 --global-response-templating
-```
-…or the standalone jar (no Docker; download once from Maven Central — see `mock-acme/README.md`):
-```bash
-java -jar mock-acme/wiremock-standalone-3.9.1.jar \
-  --root-dir mock-acme --global-response-templating --port 8080
+cd platform
+./mvnw spring-boot:run
+# (or: ./mvnw -q -DskipTests package && java -Dplatform.dashboard-dir="$PWD/../dashboard" -jar target/platform-0.0.1-SNAPSHOT.jar)
 ```
 
-**2) MCP server** (serves the tools + the `/handoff` page on :8090):
-```bash
-cd mcp-server
-ACME_BASE_URL=http://localhost:8080 PUBLIC_BASE_URL=http://localhost:8090 \
-  uv run python -m app.server
-```
-
-**3) Form-filling backend** (:8000):
+**2) Conversation backend (Python, :8000)** — talks to the live platform; offline LLM:
 ```bash
 cd backend
-MOCK_LLM=1 QUOTE_SERVICE=mcp MCP_URL=http://localhost:8090/mcp \
-  uv run uvicorn app.api.main:app --port 8000
+MOCK_LLM=1 QUOTE_SERVICE=platform PLATFORM_URL=http://localhost:8070 \
+  uv run uvicorn app.main:app --port 8000
 ```
 
-**4) Frontend** (:5173):
+**3) Frontend (React, :5173):**
 ```bash
 cd frontend
 npm install   # first time only
 npm run dev
 ```
 
-Open the printed localhost URL. Upload a document (a renewal notice → GB; a *carte
-grise* → FR) or just chat, review the **confirmation card**, confirm, and you get a
-quote with a **Continue to ACME →** handoff link. Verified end-to-end: GB ≈ £401.28,
-FR ≈ €340.47 (priced by WireMock, not the AI).
+Then open **http://localhost:5173** (the app) and **http://localhost:8070/dashboard** (live dashboard).
+Try a quote by chatting (e.g. *"I'm Mr Sam Sample, born 1990-01-01, Ford Focus reg FX19ZTC worth 12k, 8000 miles commuting, 5 yrs NCD"*) or upload a sample from `mock-docs/` (renewal/policy/licence). When all required fields are in, get the quote → continue to purchase → issue policy.
 
-**Live LLM mode:** set `OPENAI_API_KEY` and omit `MOCK_LLM`. The backend then uses
-OpenAI for document extraction + form-filling; `QUOTE_SERVICE` defaults to `mcp`.
+**MCP server (optional — the ChatGPT-app integration path):**
+```bash
+cd mcp-server
+PLATFORM_URL=http://localhost:8070 uv run python -m app.server   # streamable-HTTP on :8090
+```
+The web app talks to the platform directly; the MCP is what a ChatGPT app connects to.
+
+**Live LLM mode:** set `OPENAI_API_KEY` and omit `MOCK_LLM` (backend uses OpenAI for extraction/collection; vision for documents).
 
 ## Tests
 ```bash
-cd mcp-server && uv run pytest -q   # MCP server (units + live-WireMock integration)
-cd backend    && uv run pytest -q   # form-filling backend
-cd frontend   && npm run test        # frontend smoke test
+cd platform   && ./mvnw -q test    # Java platform (journey, rating, underwriting, purchase, policy)
+cd backend    && uv run pytest -q  # conversation backend (collection, conflict, documents, journey)
+cd mcp-server && uv run pytest -q  # MCP integration tools
+cd frontend   && npm run test       # frontend smoke tests
 ```
-The MCP↔WireMock integration test auto-skips unless Java + the WireMock jar are present, so it stays out of lightweight CI.
 
 ## Docs
-- `ARCHITECTURE.md` — architecture, request flow, GB/FR schema, comparison to `architecture.png`
-- `docs/superpowers/specs/2026-06-23-acme-motor-quote-poc-design.md` — design spec
-- `docs/superpowers/plans/2026-06-23-acme-motor-quote-poc.md` — build plan
-- `docs/open-questions-for-acme.md` — open questions to confirm with ACME
+- `ACME_ChatGPT_PoC_Build_Brief_v1_0.md` — the build brief (the spec).
+- `docs/superpowers/plans/2026-06-23-acme-brief-v1-implementation-plan.md` — sliced implementation plan.
+- `docs/open-questions-for-acme.md` — open questions to confirm with ACME.
