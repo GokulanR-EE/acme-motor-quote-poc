@@ -22,6 +22,8 @@ conversation adapter onto the same platform contract.
 from __future__ import annotations
 
 import os
+import secrets
+from datetime import date
 from typing import Any, Optional, Protocol, runtime_checkable
 
 # --- Whole-model mandatory spec (brief §11), mirrored from the platform so the
@@ -151,6 +153,12 @@ class QuoteService(Protocol):
 
     async def lookup_address(self, postcode: str) -> dict: ...
 
+    async def price(self, quote_id: str, session_id: str) -> dict: ...
+
+    async def generate_purchase_link(self, quote_id: str, session_id: str) -> dict: ...
+
+    async def issue_policy(self, quote_id: str, session_id: str) -> dict: ...
+
 
 def _platform_url() -> str:
     return os.getenv("PLATFORM_URL", "http://localhost:8070").rstrip("/")
@@ -213,6 +221,50 @@ class PlatformQuoteService:
             resp.raise_for_status()
             return resp.json()
 
+    async def price(self, quote_id: str, session_id: str) -> dict:
+        """POST /quotes/{id}/price. 200 → pricing object; 422 → not_ready_to_price
+        + missingFields; 404 → not_found. Surfaced as a structured dict, never raised."""
+        async with await self._client() as client:
+            resp = await client.post(
+                f"/quotes/{quote_id}/price", headers={"X-Session-Id": session_id}
+            )
+            if resp.status_code == 404:
+                return {"error": "not_found"}
+            if resp.status_code == 422:
+                return resp.json()  # {"error": "not_ready_to_price", "missingFields": [...]}
+            resp.raise_for_status()
+            return resp.json()
+
+    async def generate_purchase_link(self, quote_id: str, session_id: str) -> dict:
+        """POST /quotes/{id}/purchase-link. 200 → {purchaseToken, purchaseUrl};
+        409 → not_purchasable; 404 → not_found. Structured dict, never raised."""
+        async with await self._client() as client:
+            resp = await client.post(
+                f"/quotes/{quote_id}/purchase-link",
+                headers={"X-Session-Id": session_id},
+            )
+            if resp.status_code == 404:
+                return {"error": "not_found"}
+            if resp.status_code == 409:
+                return resp.json()  # {"error": "not_purchasable"}
+            resp.raise_for_status()
+            return resp.json()
+
+    async def issue_policy(self, quote_id: str, session_id: str) -> dict:
+        """POST /quotes/{id}/issue-policy. 200 → {policyNumber, status, effectiveDate};
+        409 → not_issuable; 404 → not_found. Structured dict, never raised."""
+        async with await self._client() as client:
+            resp = await client.post(
+                f"/quotes/{quote_id}/issue-policy",
+                headers={"X-Session-Id": session_id},
+            )
+            if resp.status_code == 404:
+                return {"error": "not_found"}
+            if resp.status_code == 409:
+                return resp.json()  # {"error": "not_issuable"}
+            resp.raise_for_status()
+            return resp.json()
+
 
 # --- Seeded synthetic lookups, mirrored from platform.app.vendor (no real data).
 _SEEDED_VEHICLES: dict[str, dict] = {
@@ -250,45 +302,282 @@ _SEEDED_ADDRESSES: dict[str, list[dict]] = {
 }
 
 
+# --- Mock rating + underwriting (brief §15), mirrored from platform.pricing so
+# the FakeQuoteService produces the same pricing object offline.
+_BASE_PREMIUM = 350.0
+_LOADING_UNDER_25 = 600.0
+_LOADING_HIGH_RISK_POSTCODE = 250.0
+_LOADING_PERFORMANCE_VEHICLE = 400.0
+_LOADING_PER_CLAIM = 200.0
+_LOADING_PER_CONVICTION = 300.0
+_LOADING_COMPREHENSIVE = 80.0
+_LOADING_HIGH_MILEAGE = 100.0
+_DISCOUNT_LARGE_EXCESS = 50.0
+
+_PERFORMANCE_VALUE_THRESHOLD = 60_000
+_HIGH_MILEAGE_THRESHOLD = 12_000
+_LARGE_EXCESS_THRESHOLD = 500
+_COMPULSORY_EXCESS = 350
+_INSTALMENTS = 10
+_HIGH_RISK_POSTCODE_PREFIXES = ("M1", "B1", "L1", "BD1", "BB1")
+
+_VALUE_REFER_THRESHOLD = 75_000
+_CLAIMS_REFER_THRESHOLD = 3
+_CONVICTIONS_REFER_THRESHOLD = 2
+_MIN_DRIVER_AGE = 18
+
+
+def _section(data: dict, key: str) -> dict:
+    value = (data or {}).get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _int_value(raw: Any, default: int = 0) -> int:
+    if isinstance(raw, bool):
+        return default
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            return int(float(raw.replace(",", "").strip()))
+        except ValueError:
+            return default
+    return default
+
+
+def _age_from_dob(raw: Any) -> Optional[int]:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        dob = date.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    today = date.today()
+    years = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    return years
+
+
+def _is_high_risk_postcode(postcode: Optional[str]) -> bool:
+    if not postcode:
+        return False
+    outward = postcode.upper().replace(" ", "")
+    if len(outward) > 3:
+        outward = outward[:-3]
+    return any(outward.startswith(p) for p in _HIGH_RISK_POSTCODE_PREFIXES)
+
+
+def _rate(data: dict) -> tuple[float, list[dict]]:
+    """Deterministic mock rating (brief §15): premium + a {label, amount} breakdown
+    whose lines sum to the premium, so the conversation explains without inventing."""
+    vehicle = _section(data, "vehicle")
+    customer = _section(data, "customer")
+    history = _section(data, "history")
+    cover = _section(data, "cover")
+
+    breakdown: list[dict] = [{"label": "Base premium", "amount": _BASE_PREMIUM}]
+    premium = _BASE_PREMIUM
+
+    age = _age_from_dob(customer.get("dateOfBirth"))
+    if age is not None and age < 25:
+        premium += _LOADING_UNDER_25
+        breakdown.append({"label": "Driver under 25", "amount": _LOADING_UNDER_25})
+
+    postcode = _section(customer, "address").get("postcode")
+    if _is_high_risk_postcode(postcode):
+        premium += _LOADING_HIGH_RISK_POSTCODE
+        breakdown.append({"label": "High-risk postcode", "amount": _LOADING_HIGH_RISK_POSTCODE})
+
+    if _int_value(vehicle.get("value")) >= _PERFORMANCE_VALUE_THRESHOLD:
+        premium += _LOADING_PERFORMANCE_VEHICLE
+        breakdown.append({"label": "Performance vehicle", "amount": _LOADING_PERFORMANCE_VEHICLE})
+
+    claims = _int_value(history.get("claimsLast3Years"))
+    if claims > 0:
+        amount = _LOADING_PER_CLAIM * claims
+        premium += amount
+        breakdown.append({"label": f"{claims} claim(s) in last 3 years", "amount": amount})
+
+    convictions = _int_value(history.get("offencesLast5Years"))
+    if convictions > 0:
+        amount = _LOADING_PER_CONVICTION * convictions
+        premium += amount
+        breakdown.append({"label": f"{convictions} conviction(s) in last 5 years", "amount": amount})
+
+    cover_level = str(cover.get("coverLevel") or "").lower()
+    if "comprehensive" in cover_level:
+        premium += _LOADING_COMPREHENSIVE
+        breakdown.append({"label": "Comprehensive cover", "amount": _LOADING_COMPREHENSIVE})
+
+    if _int_value(vehicle.get("annualMileage")) > _HIGH_MILEAGE_THRESHOLD:
+        premium += _LOADING_HIGH_MILEAGE
+        breakdown.append({"label": "High annual mileage", "amount": _LOADING_HIGH_MILEAGE})
+
+    if _int_value(cover.get("voluntaryExcess")) >= _LARGE_EXCESS_THRESHOLD:
+        premium -= _DISCOUNT_LARGE_EXCESS
+        breakdown.append({"label": "Large voluntary excess discount", "amount": -_DISCOUNT_LARGE_EXCESS})
+
+    return round(premium, 2), breakdown
+
+
+def _underwrite(data: dict) -> tuple[str, list[str]]:
+    """Platform-owned underwriting (brief §15): quote / refer / decline + reasons."""
+    vehicle = _section(data, "vehicle")
+    customer = _section(data, "customer")
+    history = _section(data, "history")
+
+    decline: list[str] = []
+    age = _age_from_dob(customer.get("dateOfBirth"))
+    if age is not None and age < _MIN_DRIVER_AGE:
+        decline.append("Driver is under 18")
+    if vehicle.get("supported") is False:
+        decline.append("Vehicle is not supported for cover")
+    if decline:
+        return "decline", decline
+
+    refer: list[str] = []
+    if _int_value(vehicle.get("value")) > _VALUE_REFER_THRESHOLD:
+        refer.append("Vehicle value exceeds £75,000")
+    if _int_value(history.get("claimsLast3Years")) > _CLAIMS_REFER_THRESHOLD:
+        refer.append("More than 3 claims in the last 3 years")
+    if _int_value(history.get("offencesLast5Years")) > _CONVICTIONS_REFER_THRESHOLD:
+        refer.append("More than 2 convictions in the last 5 years")
+    if refer:
+        return "refer", refer
+
+    return "quote", []
+
+
+def _monthly(annual_premium: float) -> dict:
+    instalment = round(annual_premium / _INSTALMENTS, 2)
+    deposit = round(annual_premium - instalment * (_INSTALMENTS - 1), 2)
+    return {"deposit": deposit, "instalment": instalment, "instalments": _INSTALMENTS}
+
+
+def build_pricing(data: dict) -> dict:
+    """Assemble the brief §11 pricing object from quote data (rate + underwrite)."""
+    annual_premium, breakdown = _rate(data)
+    outcome, reasons = _underwrite(data)
+    cover = _section(data, "cover")
+    driver = _section(data, "driver")
+    voluntary_excess = _int_value(cover.get("voluntaryExcess"))
+    return {
+        "annualPremium": annual_premium,
+        "currency": "GBP",
+        "iptIncluded": True,
+        "monthly": _monthly(annual_premium),
+        "compulsoryExcess": _COMPULSORY_EXCESS,
+        "voluntaryExcess": voluntary_excess,
+        "totalExcess": _COMPULSORY_EXCESS + voluntary_excess,
+        "ncdYears": _int_value(driver.get("ncdYears")),
+        "outcome": outcome,
+        "reasons": reasons,
+        "breakdown": breakdown,
+    }
+
+
 class FakeQuoteService:
-    """In-process platform mirror (deep-merge + missingFields) — no network.
+    """In-process platform mirror (deep-merge + missingFields + §15 pricing) — no network.
 
     Holds quote data keyed by (quoteId, sessionId) so it faithfully mirrors the
-    platform's session-scoped store and order-free collection for tests.
+    platform's session-scoped store, order-free collection, and price → purchase →
+    issue-policy contract for tests.
     """
 
     def __init__(self) -> None:
-        self._records: dict[str, dict] = {}  # quote_id -> {"session": str, "data": dict}
+        # quote_id -> {"session": str, "data": dict, "outcome": str|None, "pricing": dict|None}
+        self._records: dict[str, dict] = {}
         self._counter = 0
 
-    def _state(self, quote_id: str, data: dict) -> dict:
+    def _state(self, quote_id: str, record: dict) -> dict:
+        data = record["data"]
         missing = missing_fields(data)
-        return {
+        outcome = record.get("outcome")
+        journey = journey_state(data, missing)
+        if outcome == "quote":
+            journey = "quoted"
+        elif outcome == "refer":
+            journey = "referred"
+        elif outcome == "decline":
+            journey = "declined"
+        elif record.get("policy") is not None:
+            journey = "policy_issued"
+        state = {
             "quoteId": quote_id,
-            "journeyState": journey_state(data, missing),
+            "journeyState": journey,
             "missingFields": missing,
-            "currentOutcome": None,
+            "currentOutcome": outcome,
         }
+        if record.get("pricing") is not None:
+            state["pricing"] = record["pricing"]
+        return state
 
     async def start(self) -> dict:
         self._counter += 1
         quote_id = f"fake-quote-{self._counter:04d}"
         session_id = f"fake-session-{self._counter:04d}"
-        self._records[quote_id] = {"session": session_id, "data": {}}
-        return {**self._state(quote_id, {}), "sessionId": session_id}
+        record = {"session": session_id, "data": {}, "outcome": None, "pricing": None, "policy": None}
+        self._records[quote_id] = record
+        return {**self._state(quote_id, record), "sessionId": session_id}
 
     async def get(self, quote_id: str, session_id: str) -> Optional[dict]:
         record = self._records.get(quote_id)
         if record is None or record["session"] != session_id:
             return None
-        return self._state(quote_id, record["data"])
+        return self._state(quote_id, record)
 
     async def update(self, quote_id: str, session_id: str, patch: dict) -> Optional[dict]:
         record = self._records.get(quote_id)
         if record is None or record["session"] != session_id:
             return None
         deep_merge(record["data"], patch or {})
-        return self._state(quote_id, record["data"])
+        # A material change re-opens the quote: clear any prior outcome/pricing.
+        record["outcome"] = None
+        record["pricing"] = None
+        return self._state(quote_id, record)
+
+    async def price(self, quote_id: str, session_id: str) -> dict:
+        record = self._records.get(quote_id)
+        if record is None or record["session"] != session_id:
+            return {"error": "not_found"}
+        missing = missing_fields(record["data"])
+        if missing:
+            return {"error": "not_ready_to_price", "missingFields": missing}
+        pricing = build_pricing(record["data"])
+        record["outcome"] = pricing["outcome"]
+        record["pricing"] = pricing
+        return pricing
+
+    async def generate_purchase_link(self, quote_id: str, session_id: str) -> dict:
+        record = self._records.get(quote_id)
+        if record is None or record["session"] != session_id:
+            return {"error": "not_found"}
+        if record.get("outcome") != "quote":
+            return {"error": "not_purchasable"}
+        token = secrets.token_urlsafe(12)
+        return {
+            "purchaseToken": token,
+            "purchaseUrl": f"{_platform_url()}/purchase/{token}",
+        }
+
+    async def issue_policy(self, quote_id: str, session_id: str) -> dict:
+        record = self._records.get(quote_id)
+        if record is None or record["session"] != session_id:
+            return {"error": "not_found"}
+        if record.get("outcome") != "quote":
+            return {"error": "not_issuable"}
+        cover = _section(record["data"], "cover")
+        start = cover.get("coverStartDate")
+        try:
+            effective = date.fromisoformat(str(start).strip()).isoformat()
+        except (ValueError, AttributeError):
+            effective = date.today().isoformat()
+        policy = {
+            "policyNumber": "ACME-POL-TEST",
+            "status": "ISSUED",
+            "effectiveDate": effective,
+        }
+        record["policy"] = policy
+        return policy
 
     async def lookup_vehicle(self, registration: str) -> dict:
         key = (registration or "").upper().replace(" ", "")

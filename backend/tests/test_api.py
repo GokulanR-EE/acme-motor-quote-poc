@@ -1,4 +1,5 @@
-"""API: /start, /chat (SSE), /resolve — with FakeQuoteService + stubbed extraction."""
+"""API: /start, /chat (SSE), /resolve, /price, /purchase, /issue-policy —
+with FakeQuoteService + stubbed extraction."""
 
 import json
 
@@ -6,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.quote_session_client import FakeQuoteService
+from app.quote_session_client import MANDATORY_FIELDS, FakeQuoteService
 
 
 def _events(resp):
@@ -71,4 +72,113 @@ def test_chat_conflict_then_resolve(client, monkeypatch):
 
 def test_chat_unknown_session_404(client):
     resp = client.post("/chat", json={"session_id": "nope", "message": "hi"})
+    assert resp.status_code == 404
+
+
+# --- price / purchase / issue-policy ---------------------------------------
+
+
+def _complete_patch(**overrides):
+    patch: dict = {}
+    for path in MANDATORY_FIELDS:
+        parts = path.split(".")
+        node = patch
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = "filled"
+    patch["customer"]["dateOfBirth"] = "1990-01-01"
+    patch["customer"].setdefault("address", {})["postcode"] = "RG1 1AA"
+    patch["vehicle"]["value"] = 12000
+    patch["vehicle"]["annualMileage"] = 8000
+    patch["history"]["claimsLast3Years"] = 0
+    patch["history"]["offencesLast5Years"] = 0
+    patch["cover"]["coverLevel"] = "Comprehensive"
+    patch["cover"]["voluntaryExcess"] = 250
+    patch["cover"]["coverStartDate"] = "2026-07-01"
+    patch["driver"]["ncdYears"] = 5
+    for path, value in overrides.items():
+        parts = path.split(".")
+        node = patch
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    return patch
+
+
+def _complete_session(client, monkeypatch, **overrides):
+    """Start a quote and drive collection to ready_to_price via one greedy turn."""
+    sid = client.post("/start").json()["session_id"]
+    monkeypatch.setattr(
+        "app.agent.extract_patch", lambda *a, **k: _complete_patch(**overrides)
+    )
+    client.post("/chat", json={"session_id": sid, "message": "everything"})
+    return sid
+
+
+def test_price_complete_quote_returns_quote_and_explanation(client, monkeypatch):
+    sid = _complete_session(client, monkeypatch)
+    resp = client.post("/price", json={"session_id": sid})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pricing"]["outcome"] == "quote"
+    assert body["pricing"]["annualPremium"] == 430.0
+    assert "430" in body["explanation"]
+
+
+def test_chat_ready_to_price_announces(client, monkeypatch):
+    sid = client.post("/start").json()["session_id"]
+    monkeypatch.setattr("app.agent.extract_patch", lambda *a, **k: _complete_patch())
+    resp = client.post("/chat", json={"session_id": sid, "message": "everything"})
+    texts = [e["data"] for e in _events(resp) if e["type"] == "text"]
+    assert any("price" in t.lower() for t in texts)
+
+
+def test_price_incomplete_returns_422_with_missing_fields(client):
+    sid = client.post("/start").json()["session_id"]
+    resp = client.post("/price", json={"session_id": sid})
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error"] == "not_ready_to_price"
+    assert body["missingFields"]
+
+
+def test_purchase_returns_url(client, monkeypatch):
+    sid = _complete_session(client, monkeypatch)
+    client.post("/price", json={"session_id": sid})
+    resp = client.post("/purchase", json={"session_id": sid})
+    assert resp.status_code == 200
+    assert resp.json()["purchaseUrl"]
+
+
+def test_purchase_before_clean_quote_is_error(client, monkeypatch):
+    sid = _complete_session(client, monkeypatch)
+    # No /price call → not a clean quote yet.
+    resp = client.post("/purchase", json={"session_id": sid})
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "not_purchasable"
+
+
+def test_issue_policy_returns_policy_number(client, monkeypatch):
+    sid = _complete_session(client, monkeypatch)
+    client.post("/price", json={"session_id": sid})
+    resp = client.post("/issue-policy", json={"session_id": sid})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["policyNumber"]
+    assert body["status"] == "ISSUED"
+    assert body["effectiveDate"]
+
+
+def test_price_unknown_session_404(client):
+    resp = client.post("/price", json={"session_id": "nope"})
+    assert resp.status_code == 404
+
+
+def test_purchase_unknown_session_404(client):
+    resp = client.post("/purchase", json={"session_id": "nope"})
+    assert resp.status_code == 404
+
+
+def test_issue_policy_unknown_session_404(client):
+    resp = client.post("/issue-policy", json={"session_id": "nope"})
     assert resp.status_code == 404

@@ -22,10 +22,11 @@ import secrets
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.agent import apply_resolution, collect_turn
+from app.explain import explain_quote
 from app.quote_session_client import FakeQuoteService, PlatformQuoteService
 
 app = FastAPI(title="ACME Motor Quote — conversation backend (Slice 3)")
@@ -68,6 +69,10 @@ class ResolveRequest(BaseModel):
     session_id: str
     path: str
     value: object = None
+
+
+class SessionRequest(BaseModel):
+    session_id: str
 
 
 def _sse(events):
@@ -122,3 +127,75 @@ async def resolve(req: ResolveRequest):
     service = _get_service()
     client = _llm_client()
     return _sse(apply_resolution(session, service, req.path, req.value, client=client))
+
+
+def _require_session(session_id: str) -> dict:
+    session = sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return session
+
+
+@app.post("/price")
+async def price(req: SessionRequest):
+    """Price the quote via the platform. Returns ``{pricing, explanation}`` on a
+    priced quote; surfaces the platform's 422 (``not_ready_to_price`` +
+    ``missingFields``) when the quote is still incomplete."""
+    session = _require_session(req.session_id)
+    service = _get_service()
+    result = await service.price(session["quoteId"], session["sessionId"])
+
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Unknown session")
+    if result.get("error") == "not_ready_to_price":
+        return JSONResponse(status_code=422, content=result)
+
+    session["outcome"] = result.get("outcome")
+    session["pricing"] = result
+    return {"pricing": result, "explanation": explain_quote(result)}
+
+
+@app.post("/purchase")
+async def purchase(req: SessionRequest):
+    """Generate a purchase link for a cleanly-priced quote. 409-style message if
+    the quote isn't a clean ``quote`` outcome."""
+    session = _require_session(req.session_id)
+    service = _get_service()
+    result = await service.generate_purchase_link(session["quoteId"], session["sessionId"])
+
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Unknown session")
+    if result.get("error"):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": result["error"],
+                "message": "This quote can't be purchased — it isn't a clean quote.",
+            },
+        )
+    return {"purchaseUrl": result["purchaseUrl"]}
+
+
+@app.post("/issue-policy")
+async def issue_policy(req: SessionRequest):
+    """Issue a (mock) policy for a cleanly-priced quote. 409-style message if the
+    quote isn't a clean ``quote`` outcome."""
+    session = _require_session(req.session_id)
+    service = _get_service()
+    result = await service.issue_policy(session["quoteId"], session["sessionId"])
+
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Unknown session")
+    if result.get("error"):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": result["error"],
+                "message": "This quote can't be issued — it isn't a clean quote.",
+            },
+        )
+    return {
+        "policyNumber": result["policyNumber"],
+        "status": result["status"],
+        "effectiveDate": result["effectiveDate"],
+    }
