@@ -2,23 +2,22 @@ package com.acme.platform.purchase;
 
 import java.security.SecureRandom;
 import java.util.Base64;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.stereotype.Component;
 
+import com.acme.platform.persistence.PurchaseTokenEntity;
+import com.acme.platform.persistence.PurchaseTokenRepository;
+
 /**
  * Mints and resolves <b>signed, GUID-addressed purchase links</b> (brief §9,
- * Slice 7).
+ * Slice 7), now persisted via the {@link PurchaseTokenRepository} so a minted
+ * link survives restart (H2 in dev, Postgres in prod).
  *
  * <p>A purchase token is a <b>high-entropy capability</b> — 32 random bytes from
  * {@link SecureRandom}, url-safe base64 — minted <b>separately from the
  * sessionId</b>. It is the sole capability for the strict landing page: whoever
  * holds the token in the URL can render that quote, and nothing else. The token
  * maps {@code token → quoteId} only; resolving it never touches the session.
- *
- * <p>Storage is in-memory (PoC). The token is unguessable, so possession of the
- * URL is the access control — there are no user accounts (cf. {@code SessionStore}).
  */
 @Component
 public class PurchaseLinkService {
@@ -26,7 +25,11 @@ public class PurchaseLinkService {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Base64.Encoder URL_ENCODER = Base64.getUrlEncoder().withoutPadding();
 
-    private final Map<String, String> tokenToQuoteId = new ConcurrentHashMap<>();
+    private final PurchaseTokenRepository repository;
+
+    public PurchaseLinkService(PurchaseTokenRepository repository) {
+        this.repository = repository;
+    }
 
     /**
      * Mint a fresh high-entropy purchase token for {@code quoteId} and store the
@@ -37,7 +40,7 @@ public class PurchaseLinkService {
         byte[] bytes = new byte[32];
         RANDOM.nextBytes(bytes);
         String token = URL_ENCODER.encodeToString(bytes);
-        tokenToQuoteId.put(token, quoteId);
+        repository.save(new PurchaseTokenEntity(token, quoteId));
         return token;
     }
 
@@ -46,11 +49,6 @@ public class PurchaseLinkService {
         if (token == null || token.isEmpty()) {
             return null;
         }
-        return tokenToQuoteId.get(token);
-    }
-
-    /** Test helper: clear all stored tokens. */
-    public void reset() {
-        tokenToQuoteId.clear();
+        return repository.findById(token).map(PurchaseTokenEntity::getQuoteId).orElse(null);
     }
 }

@@ -7,20 +7,25 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.stereotype.Component;
 
+import com.acme.platform.persistence.QuoteEntity;
+import com.acme.platform.persistence.QuoteRepository;
+
 /**
- * Session-scoped quote store (in-memory). Quotes are keyed by {@code quoteId}
- * and bound to a <b>strong-entropy session id</b> (32 random bytes,
- * base64url-encoded, from {@link SecureRandom}). A quote is retrievable /
+ * Session-scoped quote store, now backed by the {@link QuoteRepository}
+ * (Spring Data JPA — H2 in dev, Postgres in prod). Quotes are keyed by
+ * {@code quoteId} and bound to a <b>strong-entropy session id</b> (32 random
+ * bytes, base64url-encoded, from {@link SecureRandom}). A quote is retrievable /
  * updatable <b>only</b> by presenting its session id; a missing/empty session,
  * an unknown id, or a mismatch all yield not-found — indistinguishable, so
  * existence is never revealed (brief §17.6).
  *
- * <p>There are no user accounts: the high-entropy session id is the sole access
- * control. Comparison is constant-time to avoid leaking the id by timing.
+ * <p>Access control is the constant-time session compare done here in Java —
+ * <b>never</b> a DB predicate — so a session id can never be leaked by timing or
+ * by the query plan. {@link #lookup} resolves by id alone for the token-gated
+ * landing page (the token is the capability, resolved upstream).
  */
 @Component
 public class SessionStore {
@@ -28,7 +33,11 @@ public class SessionStore {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Base64.Encoder URL_ENCODER = Base64.getUrlEncoder().withoutPadding();
 
-    private final Map<String, QuoteRecord> records = new ConcurrentHashMap<>();
+    private final QuoteRepository repository;
+
+    public SessionStore(QuoteRepository repository) {
+        this.repository = repository;
+    }
 
     /** A GUID quote id (brief §9 — crypto.randomUUID style). */
     public static String newQuoteId() {
@@ -47,31 +56,40 @@ public class SessionStore {
     }
 
     public QuoteRecord create(Map<String, Object> data) {
-        QuoteRecord record = new QuoteRecord(newQuoteId(), newSessionId(), data);
-        records.put(record.quoteId(), record);
-        return record;
+        QuoteEntity entity = new QuoteEntity(newQuoteId(), newSessionId(), data);
+        entity.setJourneyState("quote_started");
+        return new QuoteRecord(repository.save(entity));
     }
 
     /** Insert/replace a record verbatim (used to self-seed the demo quote). */
     public QuoteRecord put(QuoteRecord record) {
-        records.put(record.quoteId(), record);
-        return record;
+        return new QuoteRecord(repository.save(record.entity()));
+    }
+
+    /** Persist a (mutated) record back to the store, refreshing its updated-at stamp. */
+    public QuoteRecord save(QuoteRecord record) {
+        record.entity().touch();
+        return new QuoteRecord(repository.save(record.entity()));
     }
 
     /**
      * Return the record only if the session id matches; else {@code null}.
      * A missing/empty session id, an unknown quote id, or a mismatch all yield
-     * {@code null} — indistinguishable, so existence is never revealed.
+     * {@code null} — indistinguishable, so existence is never revealed. The
+     * session compare is constant-time and done in Java, never as a query filter.
      */
     public QuoteRecord get(String quoteId, String sessionId) {
-        QuoteRecord record = records.get(quoteId);
-        if (record == null || sessionId == null || sessionId.isEmpty()) {
+        if (quoteId == null || sessionId == null || sessionId.isEmpty()) {
             return null;
         }
-        if (!constantTimeEquals(record.sessionId(), sessionId)) {
+        QuoteEntity entity = repository.findById(quoteId).orElse(null);
+        if (entity == null) {
             return null;
         }
-        return record;
+        if (!constantTimeEquals(entity.getSessionId(), sessionId)) {
+            return null;
+        }
+        return new QuoteRecord(entity);
     }
 
     /**
@@ -83,16 +101,14 @@ public class SessionStore {
      * quote routes — those must go through {@link #get}.
      */
     public QuoteRecord lookup(String quoteId) {
-        return records.get(quoteId);
+        if (quoteId == null) {
+            return null;
+        }
+        return repository.findById(quoteId).map(QuoteRecord::new).orElse(null);
     }
 
     public boolean exists(String quoteId) {
-        return records.containsKey(quoteId);
-    }
-
-    /** Test helper: clear all stored quotes. */
-    public void reset() {
-        records.clear();
+        return quoteId != null && repository.existsById(quoteId);
     }
 
     private static boolean constantTimeEquals(String a, String b) {

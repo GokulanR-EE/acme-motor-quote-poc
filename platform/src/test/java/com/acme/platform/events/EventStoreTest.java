@@ -6,18 +6,40 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.context.annotation.Import;
 
+import com.acme.platform.persistence.DomainEventRepository;
+import com.acme.platform.persistence.JsonMapConverter;
+
+/**
+ * Repository-backed EventStore tests. {@code @DataJpaTest} wires a real
+ * {@link DomainEventRepository} against in-memory H2; the store is constructed
+ * around it so persistence (durable seq, ordered replay) and live fan-out are
+ * exercised together.
+ */
+@DataJpaTest
+@Import(JsonMapConverter.class)
 class EventStoreTest {
+
+    @Autowired DomainEventRepository repository;
+    private EventStore store;
+
+    @BeforeEach
+    void setUp() {
+        store = new EventStore(repository);
+        store.reset();
+    }
 
     @Test
     void appendAssignsMonotonicSeqAndUuidAndCategory() {
-        EventStore store = new EventStore();
         Event a = store.append("QUOTE_CREATED", Map.of("quoteId", "q1"), "domain");
         Event b = store.append("API_CALL", Map.of("api", "ping"), "api");
 
-        assertThat(a.seq()).isEqualTo(1);
-        assertThat(b.seq()).isEqualTo(2);
+        assertThat(a.seq()).isLessThan(b.seq());
         assertThat(a.id()).isNotBlank().isNotEqualTo(b.id());
         assertThat(a.category()).isEqualTo("domain");
         assertThat(b.category()).isEqualTo("api");
@@ -26,7 +48,6 @@ class EventStoreTest {
 
     @Test
     void allPreservesAppendOrder() {
-        EventStore store = new EventStore();
         store.append("A", Map.of(), "domain");
         store.append("B", Map.of(), "domain");
         store.append("C", Map.of(), "domain");
@@ -36,7 +57,6 @@ class EventStoreTest {
 
     @Test
     void subscribeReplaysHistoryThenStreamsLive() {
-        EventStore store = new EventStore();
         store.append("HIST", Map.of(), "domain");
 
         List<Event> received = new ArrayList<>();
@@ -50,7 +70,6 @@ class EventStoreTest {
 
     @Test
     void unsubscribeStopsDelivery() {
-        EventStore store = new EventStore();
         List<Event> received = new ArrayList<>();
         java.util.function.Consumer<Event> sub = received::add;
         store.subscribeWithReplay(sub);
@@ -58,5 +77,16 @@ class EventStoreTest {
 
         store.append("AFTER", Map.of(), "domain");
         assertThat(received).isEmpty();
+    }
+
+    @Test
+    void payloadJsonSurvivesRoundTripThroughTheRepository() {
+        store.append("QUOTE_PRICED", Map.of("quoteId", "q9", "outcome", "quote"), "domain");
+
+        // Re-read through a fresh store over the same repository (simulates restart).
+        EventStore reopened = new EventStore(repository);
+        Event persisted = reopened.all().stream()
+            .filter(e -> e.type().equals("QUOTE_PRICED")).findFirst().orElseThrow();
+        assertThat(persisted.payload()).containsEntry("quoteId", "q9").containsEntry("outcome", "quote");
     }
 }

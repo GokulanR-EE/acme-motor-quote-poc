@@ -8,14 +8,32 @@ import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.context.annotation.Import;
 
 import com.acme.platform.events.Event;
 import com.acme.platform.events.EventStore;
+import com.acme.platform.persistence.DomainEventRepository;
+import com.acme.platform.persistence.JsonMapConverter;
+import com.acme.platform.persistence.QuoteRepository;
 import com.acme.platform.pricing.PricingService;
 import com.acme.platform.pricing.UnderwritingEngine;
 import com.acme.platform.vendor.MockVendorClient;
 
+/**
+ * Repository-backed QuoteService tests. {@code @DataJpaTest} wires real
+ * {@link QuoteRepository} / {@link DomainEventRepository} against in-memory H2;
+ * the stores + service are constructed around them, so deep-merge, state
+ * derivation, pricing persistence, and the no-sessionId-in-events invariant are
+ * all exercised against the persistent store.
+ */
+@DataJpaTest
+@Import(JsonMapConverter.class)
 class QuoteServiceTest {
+
+    @Autowired QuoteRepository quoteRepository;
+    @Autowired DomainEventRepository eventRepository;
 
     private EventStore events;
     private SessionStore sessions;
@@ -23,8 +41,9 @@ class QuoteServiceTest {
 
     @BeforeEach
     void setUp() {
-        events = new EventStore();
-        sessions = new SessionStore();
+        events = new EventStore(eventRepository);
+        events.reset();
+        sessions = new SessionStore(quoteRepository);
         MockVendorClient vendor = new MockVendorClient();
         PricingService pricing = new PricingService(vendor, new UnderwritingEngine());
         service = new QuoteService(sessions, events, pricing, vendor);
@@ -152,6 +171,21 @@ class QuoteServiceTest {
         Map<String, Object> got = service.getQuote(rec.quoteId(), rec.sessionId());
         assertThat(got.get("journeyState")).isEqualTo("quoted");
         assertThat(got).containsKey("pricing");
+    }
+
+    @Test
+    void pricedQuoteSurvivesAReopenOfTheStore() {
+        QuoteRecord rec = sessions.create(completeQuoteData());
+        service.priceQuote(rec.quoteId(), rec.sessionId());
+
+        // Re-open the store over the same repository (simulates restart) and re-read.
+        SessionStore reopened = new SessionStore(quoteRepository);
+        QuoteRecord persisted = reopened.get(rec.quoteId(), rec.sessionId());
+        assertThat(persisted).isNotNull();
+        assertThat(persisted.entity().getCurrentOutcome()).isEqualTo("quote");
+        assertThat(persisted.entity().getJourneyState()).isEqualTo("quoted");
+        assertThat(persisted.entity().getPricing()).containsEntry("currency", "GBP");
+        assertThat(persisted.data()).containsKey("pricing");
     }
 
     /** A fully-populated, mandatory-complete quote yielding a clean quote outcome. */

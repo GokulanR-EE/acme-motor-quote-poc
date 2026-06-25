@@ -1,0 +1,20 @@
+# Test config: in-memory H2 (create-drop, fresh per run), mock vendor seam.
+# Keeps @SpringBootTest fast and isolated — never touches the dev file DB.
+spring:
+  datasource:
+    url: jdbc:h2:mem:platform-test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+platform:
+  public-base-url: http://localhost:8070
+  vendor: mock
+
+logging:
+  level:
+    com.acme.platform: INFO

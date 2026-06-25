@@ -1,0 +1,79 @@
+# Platform configuration. Profiles: `dev` (default — H2, verbose logging),
+# `prod` (Postgres, JSON logging). The vendor seam is selected by
+# `platform.vendor` (mock | soap), defaulting to the mock-vendor seam.
+spring:
+  application:
+    name: platform
+  profiles:
+    # Default profile when none is set explicitly (e.g. -Dspring.profiles.active=prod).
+    default: dev
+
+server:
+  port: 8070
+
+platform:
+  # Public base URL used to build purchase links (Slice 7); the landing page
+  # lives at <base>/purchase/<token>.
+  public-base-url: http://localhost:8070
+  # Dashboard static-files directory (served same-origin at /dashboard, brief §14).
+  dashboard-dir: ../dashboard
+  # Vendor seam: `mock` (default MockVendorClient) or `soap` (SoapVendorClient stub).
+  vendor: mock
+
+---
+# ---------------------------------------------------------------------------
+# dev / default — embedded H2 (file-backed so quotes survive a restart for the
+# demo), Hibernate ddl-auto update, verbose logging, H2 console enabled.
+# ---------------------------------------------------------------------------
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:h2:file:./data/platform;AUTO_SERVER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  h2:
+    console:
+      enabled: true
+
+logging:
+  level:
+    com.acme.platform: DEBUG
+    org.hibernate.SQL: DEBUG
+
+---
+# ---------------------------------------------------------------------------
+# prod — Postgres (driver + datasource wired; not required to run by default).
+# Override the datasource via env: SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD.
+# JSON-structured logging.
+# ---------------------------------------------------------------------------
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/platform}
+    driver-class-name: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:platform}
+    password: ${SPRING_DATASOURCE_PASSWORD:platform}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+logging:
+  structured:
+    format:
+      console: ecs
+  level:
+    com.acme.platform: INFO

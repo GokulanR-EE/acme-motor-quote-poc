@@ -72,6 +72,7 @@ public class QuoteService {
             return null;
         }
         deepMerge(record.data(), patch == null ? Map.of() : patch);
+        persist(record);
         events.append("QUOTE_UPDATED", Map.of("quoteId", record.quoteId()), "domain");
         return state(record);
     }
@@ -119,6 +120,7 @@ public class QuoteService {
         // Persist into the quote so GET /quotes/{id} reflects the priced state.
         record.data().put("pricing", pricingObject);
         record.data().put("currentOutcome", outcome);
+        persist(record);
 
         // Domain event: quoteId + outcome only (never the sessionId).
         Map<String, Object> eventPayload = new LinkedHashMap<>();
@@ -208,6 +210,7 @@ public class QuoteService {
         // Persist onto the quote + advance the journey to policy_issued.
         record.data().put("policy", policySection);
         record.data().put("policyIssued", true);
+        persist(record);
 
         Map<String, Object> eventPayload = new LinkedHashMap<>();
         eventPayload.put("quoteId", record.quoteId());
@@ -247,6 +250,29 @@ public class QuoteService {
         view.put("totalExcess", pricing.get("totalExcess"));
         view.put("outcome", data.get("currentOutcome"));
         return view;
+    }
+
+    /**
+     * Persist a mutated record: refresh the entity's query-side projections
+     * (journeyState, currentOutcome, pricing, policy JSON columns) from the
+     * whole-model data, then save through the repository. The {@code data} JSON
+     * column remains the source of truth; the projections exist so the dashboard
+     * / a restart can read derived state without recomputation.
+     */
+    @SuppressWarnings("unchecked")
+    private void persist(QuoteRecord record) {
+        if (record.entity() != null) {
+            Map<String, Object> data = record.data();
+            List<String> missing = RequiredFields.missingFields(data);
+            String currentOutcome = (String) data.get("currentOutcome");
+            record.entity().setCurrentOutcome(currentOutcome);
+            record.entity().setJourneyState(journeyState(data, missing, currentOutcome));
+            record.entity().setPricing(data.get("pricing") instanceof Map
+                ? (Map<String, Object>) data.get("pricing") : null);
+            record.entity().setPolicy(data.get("policy") instanceof Map
+                ? (Map<String, Object>) data.get("policy") : null);
+        }
+        sessions.save(record);
     }
 
     /** A quote is cleanly priced iff its {@code currentOutcome} is {@code quote}. */

@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
+import com.acme.platform.persistence.QuoteEntity;
 import com.acme.platform.pricing.PricingService;
 
 /**
@@ -51,13 +53,20 @@ public class DemoSeeder {
      * to a fully-priced {@code quoted} sample (brief §9, §17.7) — no need to call
      * {@code /price} first for demos / screenshots.
      */
+    @Transactional
     public synchronized QuoteRecord ensureSeeded() {
         if (!sessions.exists(DEMO_QUOTE_ID)) {
             Map<String, Object> data = buildDemoData();
             Map<String, Object> pricingObject = pricing.price(data);
+            String outcome = (String) pricingObject.get("outcome");
             data.put("pricing", pricingObject);
-            data.put("currentOutcome", pricingObject.get("outcome"));
-            sessions.put(new QuoteRecord(DEMO_QUOTE_ID, DEMO_SESSION_ID, data));
+            data.put("currentOutcome", outcome);
+
+            QuoteEntity entity = new QuoteEntity(DEMO_QUOTE_ID, DEMO_SESSION_ID, data);
+            entity.setCurrentOutcome(outcome);
+            entity.setJourneyState(PricingService.journeyStateFor(outcome));
+            entity.setPricing(pricingObject);
+            sessions.put(new QuoteRecord(entity));
         }
         return sessions.get(DEMO_QUOTE_ID, DEMO_SESSION_ID);
     }

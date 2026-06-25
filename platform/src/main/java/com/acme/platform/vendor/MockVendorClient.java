@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-import org.springframework.context.annotation.Primary;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,11 +21,13 @@ import org.springframework.stereotype.Component;
  * demos always have a make/model to show; address lookup likewise returns a
  * deterministic candidate list for unseeded postcodes.
  *
- * <p>{@code @Primary} so it is injected by default; the future
- * {@code SoapVendorClient} will replace it behind the same interface.
+ * <p>Active by default (the {@code mock-vendor} seam, {@code platform.vendor=mock}
+ * or unset); the {@link SoapVendorClient} stub documents the production
+ * {@code soap-vendor} seam ({@code platform.vendor=soap}) behind the same
+ * interface, so swapping mock&rarr;SOAP changes nothing in the callers.
  */
 @Component
-@Primary
+@ConditionalOnProperty(name = "platform.vendor", havingValue = "mock", matchIfMissing = true)
 public class MockVendorClient implements VendorClient {
 
     // Seeded synthetic registrations: one ordinary car, plus a performance /
