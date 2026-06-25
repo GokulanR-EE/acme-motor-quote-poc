@@ -178,7 +178,7 @@ public class QuoteService {
     /**
      * Issue a (mock) policy for a <b>cleanly-priced</b> quote (Slice 8):
      * session-gated, and only if {@code currentOutcome == quote}. Issues via the
-     * vendor SOAP seam ({@link VendorClient#issuePolicy}), stores the policy on
+     * vendor seam ({@link VendorClient#issuePolicy}), stores the policy on
      * the quote under {@code policy}, advances {@code journeyState} to
      * {@code policy_issued}, and emits {@code POLICY_CREATED}
      * ({@code quoteId} + {@code policyNumber} — no sessionId).
@@ -199,7 +199,7 @@ public class QuoteService {
             return new PurchaseResult(PurchaseStatus.NOT_QUOTE, null);
         }
 
-        // Issuance is a value obtained from the vendor over SOAP (mock here).
+        // Issuance is a value obtained from the vendor seam (mock here).
         PolicyResult policy = vendor.issuePolicy(record.data());
 
         Map<String, Object> policySection = new LinkedHashMap<>();

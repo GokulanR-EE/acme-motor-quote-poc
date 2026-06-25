@@ -148,7 +148,7 @@ public class PlatformController {
     }
 
     /**
-     * Price a quote: rate (via the vendor SOAP seam) + underwrite (platform),
+     * Price a quote: rate (via the vendor seam) + underwrite (platform),
      * returning the brief §11 pricing object. Requires X-Session-Id; 404 on
      * unknown id or mismatch (same as other quote routes). 422 if mandatory
      * fields remain (can't price an incomplete quote).
@@ -230,7 +230,7 @@ public class PlatformController {
     /**
      * Issue a (mock) policy for a cleanly-priced quote (Slice 8). Requires
      * X-Session-Id; 404 on unknown id or mismatch. 409 if the quote isn't cleanly
-     * priced (outcome != quote). Issues via the vendor SOAP seam, stores the
+     * priced (outcome != quote). Issues via the vendor seam, stores the
      * policy on the quote, advances journeyState to {@code policy_issued}, emits
      * POLICY_CREATED, and returns the policy details. Real issuance/payments stay
      * out of scope (brief §2) — only the seam is visible.
@@ -261,7 +261,7 @@ public class PlatformController {
         };
     }
 
-    /** Vehicle lookup via the vendor SOAP seam (no session required). */
+    /** Vehicle lookup via the vendor seam (no session required). */
     @GetMapping("/vehicles/{registration}")
     public Map<String, Object> lookupVehicle(
         @PathVariable @NotBlank @Size(max = 32) String registration) {
@@ -273,7 +273,7 @@ public class PlatformController {
         return result;
     }
 
-    /** Address candidates via the vendor SOAP seam (no session required). */
+    /** Address candidates via the vendor seam (no session required). */
     @GetMapping("/addresses")
     public Map<String, Object> lookupAddress(
         @RequestParam @NotBlank @Size(max = 16) String postcode) {

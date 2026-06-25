@@ -7,31 +7,30 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Real-vendor seam (the {@code soap-vendor} variant, {@code platform.vendor=soap}).
- * The default {@code mock-vendor} seam ({@link MockVendorClient}) is active
- * otherwise.
+ * The live-vendor seam (the {@code live} variant, {@code platform.vendor=live}).
+ * The default mock-vendor seam ({@link MockVendorClient}) is active otherwise.
  *
- * <p>In production this becomes a SOAP client <b>generated from the vendor
- * WSDL</b> (JAX-WS / Spring-WS, with WS-Security for the message-level
- * credentials a real insurer's vendor requires). It implements the <b>same</b>
- * {@link VendorClient} interface as {@link MockVendorClient}, so swapping
- * mock&rarr;SOAP is <b>config-only</b> ({@code platform.vendor=soap}) — no change
- * to {@code QuoteService}, {@code PricingService}, or {@code UnderwritingEngine}.
+ * <p>This is the boundary to the external vendor that supplies rating/pricing and
+ * vehicle/address data. The real implementation calls the vendor kit over whatever
+ * transport it exposes — SOAP, XML-over-HTTP, or REST — decided when the vendor is
+ * integrated. It implements the <b>same</b> {@link VendorClient} interface as
+ * {@link MockVendorClient}, so swapping mock&rarr;live is <b>config-only</b>
+ * ({@code platform.vendor=live}) — no change to {@code QuoteService},
+ * {@code PricingService}, or {@code UnderwritingEngine}.
  *
- * <p>Until the WSDL is available, every method <b>fails fast</b> with one clear,
+ * <p>Until the vendor is integrated, every method <b>fails fast</b> with one clear,
  * uniform {@link UnsupportedOperationException} — this bean documents the
  * production seam rather than implementing it. Rating, vehicle/address lookup,
  * and policy issuance all remain mocked behind {@link MockVendorClient} for the
  * PoC (brief §2, §3, §15).
  */
 @Component
-@ConditionalOnProperty(name = "platform.vendor", havingValue = "soap")
-public class SoapVendorClient implements VendorClient {
+@ConditionalOnProperty(name = "platform.vendor", havingValue = "live")
+public class LiveVendorClient implements VendorClient {
 
     /** Single, clear message for every unimplemented seam method. */
     static final String NOT_IMPLEMENTED =
-        "real vendor SOAP integration not implemented; use the default mock-vendor "
-        + "profile or supply the vendor WSDL";
+        "live vendor integration not implemented; using the default mock vendor";
 
     @Override
     public Map<String, Object> lookupVehicle(String registration) {

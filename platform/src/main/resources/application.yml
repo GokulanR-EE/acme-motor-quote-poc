@@ -1,6 +1,6 @@
 # Platform configuration. Profiles: `dev` (default — H2, verbose logging),
 # `prod` (Postgres, JSON logging). The vendor seam is selected by
-# `platform.vendor` (mock | soap), defaulting to the mock-vendor seam.
+# `platform.vendor` (mock | live), defaulting to the mock-vendor seam.
 spring:
   application:
     name: platform
@@ -17,7 +17,7 @@ platform:
   public-base-url: http://localhost:8070
   # Dashboard static-files directory (served same-origin at /dashboard, brief §14).
   dashboard-dir: ../dashboard
-  # Vendor seam: `mock` (default MockVendorClient) or `soap` (SoapVendorClient stub).
+  # Vendor seam: `mock` (default MockVendorClient) or `live` (LiveVendorClient stub).
   vendor: mock
 
 ---

@@ -22,8 +22,9 @@ The 24-Jun meeting tentatively split "Java for the API, Python for the mock serv
 platform owner has resolved this: **the entire platform — API *and* mock — is Java /
 Spring Boot. There is no separate Python mock service.** Rationale:
 
-- The platform must make **vendor SOAP calls** in production; Java (JAX-WS / Spring-WS /
-  WS-Security) is the right stack for that integration.
+- The platform must integrate with the **external vendor** in production over whatever
+  transport the vendor kit exposes (SOAP, XML, or REST); Java is a solid stack for that
+  integration whichever it turns out to be.
 - One service is simpler to build, test, deploy, and reason about than two.
 - The "mock" is **not a separate service** — it is the current *implementation* of the
   platform's **vendor seam**, swappable to the real vendor with no other change.
@@ -35,22 +36,24 @@ are separate components, unchanged by this decision.)
 
 The single rule: **only vendor-sourced data is mocked.**
 
-| Mocked — behind the `VendorClient` SOAP seam | Production-grade — mimics a live system |
+| Mocked — behind the `VendorClient` vendor seam | Production-grade — mimics a live system |
 |---|---|
-| rating / **premium values**, vehicle lookup, address lookup (what a real vendor's SOAP API returns) | quote state & journey state machine; **schema validation**; missing-field calculation; **underwriting** decision (quote / refer / decline + reasons); **policy creation** (policy number, status); **price-breakdown** assembly; persistence; event store + three-layer logging; purchase link + strict-GUID landing |
+| rating / **premium values**, vehicle lookup, address lookup (what a real vendor's API returns — SOAP/XML/REST) | quote state & journey state machine; **schema validation**; missing-field calculation; **underwriting** decision (quote / refer / decline + reasons); **policy creation** (policy number, status); **price-breakdown** assembly; persistence; event store + three-layer logging; purchase link + strict-GUID landing |
 
 Underwriting (quote/refer/decline eligibility) is the **insurer's** decision and lives in
 the platform; the **rating values** it acts on come from the vendor seam (mocked).
 
-## 4. Vendor SOAP seam
+## 4. Vendor seam
 
 - `VendorClient` interface — the boundary to the external vendor. Methods cover the
   vendor-sourced data: `rate(quote)`, `lookupVehicle(reg)`, `lookupAddress(postcode)`
-  (and, where issuance is vendor-side, `issuePolicy`).
+  (and, where issuance is vendor-side, `issuePolicy`). The seam is **transport-agnostic** —
+  callers depend only on this interface, never on the wire protocol.
 - `MockVendorClient` — **default** (`platform.vendor=mock`): synthetic, **deterministic**.
-- `SoapVendorClient` — **`platform.vendor=soap`** profile: stub today (throws "not
-  implemented"); becomes the real WSDL-generated JAX-WS / Spring-WS client (with
-  WS-Security) later. Swapping mock→real is **config-only**; no other code changes.
+- `LiveVendorClient` — **`platform.vendor=live`** profile: stub today (throws "not
+  implemented"); becomes the real client calling the vendor's API over whatever transport
+  it exposes (SOAP, XML, or REST depending on the vendor kit), decided when the vendor is
+  integrated. Swapping mock→live is **config-only**; no other code changes.
 
 ## 5. Mock-data coherence
 
@@ -80,20 +83,20 @@ Most are already implemented; this spec records the full bar:
 - **Error taxonomy:** global handler, structured `{code,message,details}`, consistent
   statuses (404 / 409 / 422 / 400 / 500). *(Done.)*
 - **Validation:** bean validation; session header required; size limits. *(Done.)*
-- **Config & profiles:** `dev`/`prod`; `mock-vendor`/`soap-vendor`. *(Done.)*
+- **Config & profiles:** `dev`/`prod`; `platform.vendor=mock` / `platform.vendor=live`. *(Done.)*
 - **Security:** strong-entropy **session-scoped** access (no users/sign-in/auth, per
   brief); cross-session access rejected. *(Done.)*
 - **API contract:** OpenAPI published (springdoc). *(Done.)*
 - **Observability:** actuator health; structured logging. *(Partial.)*
 - **Still to build:** **deployment + CI/CD** (GitHub Actions; host TBD GCP/AWS), more
   **integration tests** (DB-backed, end-to-end journey), and tidying the
-  **`SoapVendorClient` seam stub** + documenting the swap.
+  **`LiveVendorClient` seam stub** + documenting the swap.
 
 ## 8. Out of scope
 
 - A separate Python mock service (explicitly dropped).
 - Multi-product/cover-tier catalog (future).
-- Real vendor SOAP integration, real payments, policy issuance to a live system, auth.
+- Real vendor integration (SOAP/XML/REST), real payments, policy issuance to a live system, auth.
 
 ## 9. Testing
 

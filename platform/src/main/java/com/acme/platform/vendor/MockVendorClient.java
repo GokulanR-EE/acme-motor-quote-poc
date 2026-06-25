@@ -17,9 +17,10 @@ import org.springframework.stereotype.Component;
 /**
  * Deterministic, synthetic {@link VendorClient} for the PoC — no real brand,
  * plate, or vehicle data anywhere (brief naming rule). This is the <b>reference
- * implementation</b> of the vendor seam: the future {@link SoapVendorClient}
- * returns the same shapes from real WSDL calls, so the data here is kept
- * production-quality-as-a-mock — <b>coherent and never random</b>.
+ * implementation</b> of the vendor seam: the future {@link LiveVendorClient}
+ * returns the same shapes from real vendor calls (over SOAP, XML, or REST), so
+ * the data here is kept production-quality-as-a-mock — <b>coherent and never
+ * random</b>.
  *
  * <h2>Coherence guarantees</h2>
  * <ul>
@@ -36,9 +37,9 @@ import org.springframework.stereotype.Component;
  *       annual premium (both rounded to 2dp); the premium is never negative.</li>
  * </ul>
  *
- * <p>Active by default (the {@code mock-vendor} seam, {@code platform.vendor=mock}
- * or unset); {@link SoapVendorClient} is the {@code soap} variant behind the same
- * interface, so swapping mock&rarr;SOAP is config-only.
+ * <p>Active by default (the mock-vendor seam, {@code platform.vendor=mock}
+ * or unset); {@link LiveVendorClient} is the {@code live} variant behind the same
+ * interface, so swapping mock&rarr;live is config-only.
  */
 @Component
 @ConditionalOnProperty(name = "platform.vendor", havingValue = "mock", matchIfMissing = true)
@@ -250,9 +251,9 @@ public class MockVendorClient implements VendorClient {
      * <b>sums exactly</b> to the returned premium and the conversation can explain
      * the number without inventing anything.
      *
-     * <p>This is the value a real insurer would obtain from the vendor over SOAP;
-     * a future {@code SoapVendorClient.rate(...)} would return the same
-     * {@link RatingResult} shape.
+     * <p>This is the value a real insurer would obtain from the vendor; a future
+     * {@code LiveVendorClient.rate(...)} would return the same
+     * {@link RatingResult} shape over whatever transport the vendor exposes.
      */
     @Override
     public RatingResult rate(Map<String, Object> quoteData) {
@@ -321,9 +322,10 @@ public class MockVendorClient implements VendorClient {
      * an effective date taken from the quote's cover start date (or today if
      * absent/unparseable). No real brand, plate, or vehicle data.
      *
-     * <p>This is the value a real insurer would obtain from the vendor over SOAP;
-     * a future {@code SoapVendorClient.issuePolicy(...)} would return the same
-     * {@link PolicyResult} shape. <b>Real issuance and payments stay out of scope
+     * <p>This is the value a real insurer would obtain from the vendor; a future
+     * {@code LiveVendorClient.issuePolicy(...)} would return the same
+     * {@link PolicyResult} shape over whatever transport the vendor exposes.
+     * <b>Real issuance and payments stay out of scope
      * (brief §2)</b> — only this seam is visible.
      */
     @Override

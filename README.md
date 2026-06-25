@@ -16,15 +16,16 @@ UI (React web app  OR  ChatGPT app)
    → Conversation backend (Python)      runs the LLM / greedy collection / doc extraction
    → MCP server (Python)                integration layer: typed tools (separate process)
    → Platform (Java / Spring Boot)      SOURCE OF TRUTH: quote state, rating, underwriting,
-                                          purchase link, mock policy issuance + vendor SOAP seam
+                                          purchase link, mock policy issuance + vendor seam
    → Dashboard (live, served by the platform)   |   GUID purchase/landing page
 ```
 The conversation layer owns the conversation; the **platform owns the journey**. Rating
-and policy issuance go through a **`VendorClient` SOAP seam** (mocked now; a real
-`SoapVendorClient` from the vendor WSDL drops in later with no other change).
+and policy issuance go through a **`VendorClient` vendor seam** (mocked now; a real
+`LiveVendorClient` calling the vendor's API — SOAP, XML, or REST depending on the
+vendor kit — drops in later with no other change).
 
 ## Components
-- `platform/` — **Java/Spring Boot** mock insurer platform (port 8070): session-scoped quote service (whole-model, deep-merge, missingFields), rating + underwriting (quote/refer/decline), purchase link + strict-GUID landing page, mock policy issuance, event store + three-layer logging, **vendor SOAP seam**, OpenAPI. Serves the dashboard at `/dashboard`.
+- `platform/` — **Java/Spring Boot** mock insurer platform (port 8070): session-scoped quote service (whole-model, deep-merge, missingFields), rating + underwriting (quote/refer/decline), purchase link + strict-GUID landing page, mock policy issuance, event store + three-layer logging, **vendor seam**, OpenAPI. Serves the dashboard at `/dashboard`.
 - `mcp-server/` — **Python** MCP integration layer (port 8090): session-aware tools `start/get/update_motor_quote`, `lookup_vehicle/address`, `price_motor_quote`, `generate_purchase_link`, `issue_policy`. LLM-free.
 - `backend/` — **Python** conversation backend (port 8000): greedy, question-anchored collection; conflict resolution; document upload + whole-model vision extraction; price/explain/purchase/issue endpoints.
 - `frontend/` — **React/Vite** web UI (port 5173): chat, staged document upload, conflict chips, quote card, purchase, policy.

@@ -7,18 +7,19 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 /**
  * Vendor seam profile check. The seam is a single interface ({@link VendorClient})
  * with two config-selected implementations:
  * <ul>
  *   <li>default ({@code platform.vendor} unset / mock) → {@link MockVendorClient}
- *       is wired and the {@link SoapVendorClient} stub is absent;</li>
- *   <li>{@code soap-vendor} profile ({@code platform.vendor=soap}) →
- *       {@link SoapVendorClient} is wired and every call fails fast.</li>
+ *       is wired and the {@link LiveVendorClient} stub is absent;</li>
+ *   <li>{@code platform.vendor=live} → {@link LiveVendorClient} is wired and
+ *       every call fails fast.</li>
  * </ul>
- * This proves the mock&rarr;SOAP swap is config-only, with no other code change.
+ * This proves the mock&rarr;live swap is config-only, with no other code change.
+ * The live client's wire protocol (SOAP, XML, or REST) is an implementation
+ * detail decided when the vendor is integrated.
  */
 @SpringBootTest
 class VendorProfileTest {
@@ -32,34 +33,33 @@ class VendorProfileTest {
     }
 
     @Test
-    void soapVendorStubIsNotWiredByDefault() {
-        assertThat(context.getBeanNamesForType(SoapVendorClient.class)).isEmpty();
+    void liveVendorStubIsNotWiredByDefault() {
+        assertThat(context.getBeanNamesForType(LiveVendorClient.class)).isEmpty();
     }
 
     /**
-     * Under the {@code soap-vendor} profile the seam swaps to the
-     * {@link SoapVendorClient} stub, and every method fails fast with one clear
-     * {@link UnsupportedOperationException} until the vendor WSDL is supplied.
+     * With {@code platform.vendor=live} the seam swaps to the
+     * {@link LiveVendorClient} stub, and every method fails fast with one clear
+     * {@link UnsupportedOperationException} until the vendor is integrated.
      */
     @Nested
-    @SpringBootTest
-    @ActiveProfiles("soap-vendor")
-    class SoapProfile {
+    @SpringBootTest(properties = "platform.vendor=live")
+    class LiveProfile {
 
-        @Autowired VendorClient soapVendorClient;
+        @Autowired VendorClient liveVendorClient;
 
         @Test
-        void soapVendorIsActiveAndEveryMethodFailsFast() {
-            assertThat(soapVendorClient).isInstanceOf(SoapVendorClient.class);
+        void liveVendorIsActiveAndEveryMethodFailsFast() {
+            assertThat(liveVendorClient).isInstanceOf(LiveVendorClient.class);
 
-            assertThatThrownBy(() -> soapVendorClient.lookupVehicle("FX19ZTC"))
+            assertThatThrownBy(() -> liveVendorClient.lookupVehicle("FX19ZTC"))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessageContaining("not implemented");
-            assertThatThrownBy(() -> soapVendorClient.lookupAddress("RG1 1AA"))
+            assertThatThrownBy(() -> liveVendorClient.lookupAddress("RG1 1AA"))
                 .isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> soapVendorClient.rate(java.util.Map.of()))
+            assertThatThrownBy(() -> liveVendorClient.rate(java.util.Map.of()))
                 .isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> soapVendorClient.issuePolicy(java.util.Map.of()))
+            assertThatThrownBy(() -> liveVendorClient.issuePolicy(java.util.Map.of()))
                 .isInstanceOf(UnsupportedOperationException.class);
         }
     }

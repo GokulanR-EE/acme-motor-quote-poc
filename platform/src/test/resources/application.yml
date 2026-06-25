@@ -18,14 +18,3 @@ platform:
 logging:
   level:
     com.acme.platform: INFO
-
----
-# soap-vendor — selects the real-vendor SOAP seam stub (SoapVendorClient).
-# Used by VendorProfileTest to prove the seam swaps by config alone and that the
-# stub fails fast until the vendor WSDL is supplied.
-spring:
-  config:
-    activate:
-      on-profile: soap-vendor
-platform:
-  vendor: soap

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The rating a real UK motor insurer obtains <b>from the vendor over SOAP</b>
+ * The rating a real UK motor insurer obtains <b>from the vendor</b>
  * (brief §15): the computed annual premium plus a transparent
  * {@code breakdown} of the lines that produced it.
  *

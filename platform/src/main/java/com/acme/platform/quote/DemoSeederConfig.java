@@ -19,7 +19,7 @@ public class DemoSeederConfig {
 
     /**
      * Self-seed the stable demo quote on startup so it is always resolvable. Seed
-     * failures are logged, not fatal — under the {@code soap-vendor} seam the
+     * failures are logged, not fatal — under the {@code live} vendor seam the
      * (unimplemented) stub throws while pricing the sample, so the app still boots
      * to demonstrate the seam rather than crashing on startup.
      */
