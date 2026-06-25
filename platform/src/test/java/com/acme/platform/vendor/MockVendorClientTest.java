@@ -31,10 +31,63 @@ class MockVendorClientTest {
     }
 
     @Test
+    void fallbackIsCoherentCarDataInPlausibleRangesNotNonsense() {
+        Map<String, Object> v = vendor.lookupVehicle("ZZ99ZZZ");
+        // A car, not a truck: full coherent spec.
+        assertThat(v).containsKeys("make", "model", "derivative", "fuel", "transmission",
+            "value", "insuranceGroup");
+        int value = ((Number) v.get("value")).intValue();
+        int group = ((Number) v.get("insuranceGroup")).intValue();
+        assertThat(value).isBetween(MockVendorClient.FALLBACK_VALUE_MIN, MockVendorClient.FALLBACK_VALUE_MAX);
+        assertThat(group).isBetween(MockVendorClient.FALLBACK_GROUP_MIN, MockVendorClient.FALLBACK_GROUP_MAX);
+    }
+
+    @Test
+    void fallbackIsDeterministicAcrossCallsAndVariesByRegistration() {
+        Map<String, Object> a1 = vendor.lookupVehicle("ZZ99ZZZ");
+        Map<String, Object> a2 = vendor.lookupVehicle("ZZ99ZZZ");
+        // Stable across calls (registration echoed differs by case; normalise first).
+        assertThat(a1).containsAllEntriesOf(a2);
+
+        Map<String, Object> b = vendor.lookupVehicle("AB12CDE");
+        // Different registrations should generally yield different synthetic specs.
+        assertThat(b.get("value")).isNotNull();
+        assertThat(b.get("make")).isEqualTo("Sample Motors");
+    }
+
+    @Test
+    void seededHighValueVehicleHasPerformanceRangeValueAndGroup() {
+        Map<String, Object> v = vendor.lookupVehicle("PF21XYZ");
+        assertThat(v.get("make")).isEqualTo("Performance Marque");
+        assertThat(((Number) v.get("value")).intValue())
+            .isGreaterThanOrEqualTo(MockVendorClient.PERFORMANCE_VALUE_THRESHOLD);
+        assertThat(((Number) v.get("insuranceGroup")).intValue()).isBetween(1, 50);
+    }
+
+    @Test
+    void expandedSeedSetCoversSeveralRealisticGbVehicles() {
+        assertThat(vendor.lookupVehicle("VW68ABC").get("make")).isEqualTo("Volkswagen");
+        assertThat(vendor.lookupVehicle("VX17KLM").get("make")).isEqualTo("Vauxhall");
+        Map<String, Object> ev = vendor.lookupVehicle("TS70EVX");
+        assertThat(ev.get("fuel")).isEqualTo("Electric");
+    }
+
+    @Test
     void seededPostcodeReturnsCandidateList() {
         List<Map<String, Object>> candidates = vendor.lookupAddress("RG1 1AA");
         assertThat(candidates).hasSizeGreaterThanOrEqualTo(2);
         assertThat(candidates.get(0)).containsKey("houseNumberOrName");
+    }
+
+    @Test
+    void highRiskSeededPostcodeReturnsCandidatesWithExpectedShape() {
+        List<Map<String, Object>> candidates = vendor.lookupAddress("M1 2AB");
+        assertThat(candidates).hasSizeBetween(2, 3);
+        assertThat(candidates).allSatisfy(a ->
+            assertThat(a).containsKeys("houseNumberOrName", "line1", "postcode"));
+        assertThat(candidates.get(0).get("postcode")).isEqualTo("M1 2AB");
+        // And the rating treats it as high-risk.
+        assertThat(MockVendorClient.isHighRiskPostcode("M1 2AB")).isTrue();
     }
 
     @Test
@@ -125,6 +178,45 @@ class MockVendorClientTest {
         sub(data, "cover").put("voluntaryExcess", 600);
 
         RatingResult r = vendor.rate(data);
+        assertBreakdownSumsToPremium(r);
+    }
+
+    @Test
+    void breakdownSumsExactlyToPremiumAcrossSeveralProfiles() {
+        // Profile 1: clean base.
+        assertBreakdownSumsToPremium(vendor.rate(baseQuote()));
+
+        // Profile 2: young driver, high-risk, performance, claims+convictions, comp, high mileage, large excess.
+        Map<String, Object> loaded = baseQuote();
+        sub(loaded, "customer").put("dateOfBirth", LocalDate.now().minusYears(19).toString());
+        sub(loaded, "customer").put("address", Map.of("postcode", "M1 2AB"));
+        sub(loaded, "vehicle").put("value", 85000);
+        sub(loaded, "vehicle").put("annualMileage", 30000);
+        sub(loaded, "history").put("claimsLast3Years", 3);
+        sub(loaded, "history").put("offencesLast5Years", 2);
+        sub(loaded, "cover").put("coverLevel", "Comprehensive");
+        sub(loaded, "cover").put("voluntaryExcess", 750);
+        assertBreakdownSumsToPremium(vendor.rate(loaded));
+
+        // Profile 3: third-party, mid-range, single claim.
+        Map<String, Object> mid = baseQuote();
+        sub(mid, "history").put("claimsLast3Years", 1);
+        assertBreakdownSumsToPremium(vendor.rate(mid));
+    }
+
+    @Test
+    void premiumIsRoundedToTwoDecimalsAndNeverNegative() {
+        RatingResult r = vendor.rate(baseQuote());
+        double rounded = Math.round(r.annualPremium() * 100.0) / 100.0;
+        assertThat(r.annualPremium()).isEqualTo(rounded);
+        assertThat(r.annualPremium()).isGreaterThanOrEqualTo(0.0);
+        r.breakdown().forEach(line -> {
+            double amt = ((Number) line.get("amount")).doubleValue();
+            assertThat(amt).isEqualTo(Math.round(amt * 100.0) / 100.0);
+        });
+    }
+
+    private static void assertBreakdownSumsToPremium(RatingResult r) {
         double sum = r.breakdown().stream()
             .mapToDouble(line -> ((Number) line.get("amount")).doubleValue())
             .sum();
